@@ -48,6 +48,32 @@ func generateMAC(vmID string) string {
 	return mac.String()
 }
 
+func parseGuestIPConfig(cfg NetworkConfig) (*fc.IPConfiguration, error) {
+	guestAddr, err := parseIPNet(cfg.GuestIP)
+	if err != nil {
+		return nil, fmt.Errorf("parse guest IP %s: %w", cfg.GuestIP, err)
+	}
+
+	gateway, _, err := net.ParseCIDR(cfg.HostIP)
+	if err != nil {
+		return nil, fmt.Errorf("parse host gateway IP %s: %w", cfg.HostIP, err)
+	}
+
+	return &fc.IPConfiguration{
+		IPAddr:  guestAddr,
+		Gateway: gateway,
+	}, nil
+}
+
+func parseIPNet(value string) (net.IPNet, error) {
+	ip, ipNet, err := net.ParseCIDR(value)
+	if err != nil {
+		return net.IPNet{}, err
+	}
+	ipNet.IP = ip
+	return *ipNet, nil
+}
+
 // Configure prepares the host network (TAP + iptables) and initializes the
 // Firecracker Machine struct without starting the VMM process yet.
 func (i *Instance) Configure(ctx context.Context) error {
@@ -66,31 +92,42 @@ func (i *Instance) Configure(ctx context.Context) error {
 	macAddr := generateMAC(i.ID)
 
 	// 3. Build the Firecracker SDK Configuration
+	guestIP, err := parseGuestIPConfig(i.netCfg)
+	if err != nil {
+		return err
+	}
+
+	driveID := "rootfs"
+	isRoot := true
+	isReadOnly := false
+	rootfsPath := i.cfg.RootfsPath
+	vcpuCount := int64(i.cfg.VCPUCount)
+	memSize := int64(i.cfg.MemSizeMB)
+
 	fcConfig := fc.Config{
 		SocketPath:      i.SocketPath,
 		KernelImagePath: i.cfg.KernelPath,
 		KernelArgs:      i.cfg.BootArgs,
-		RootDrive: &fc.BlockDevice{
-			HostPath:     i.cfg.RootfsPath,
-			DriveID:      "rootfs",
-			IsRootDevice: true,
-			IsReadOnly:   false,
+		Drives: []models.Drive{
+			{
+				DriveID:      &driveID,
+				PathOnHost:   &rootfsPath,
+				IsRootDevice: &isRoot,
+				IsReadOnly:   &isReadOnly,
+			},
 		},
 		MachineCfg: models.MachineConfiguration{
-			VcpuCount:  models.Int64(int64(i.cfg.VCPUCount)),
-			MemSizeMiB: models.Int64(int64(i.cfg.MemSizeMB)),
+			VcpuCount:  &vcpuCount,
+			MemSizeMib: &memSize,
 		},
 		NetworkInterfaces: []fc.NetworkInterface{
 			{
-				StaticConfig: &fc.StaticNetworkConfiguration{
+				StaticConfiguration: &fc.StaticNetworkConfiguration{
 					HostDevName: i.netCfg.TapName,
 					MacAddress:  macAddr,
-					// Explicitly define the Guest IP configuration.
-					// These must match the subnet configured on the host TAP device.
-					IPConfig: &fc.IPConfiguration{
-						Address: i.netCfg.GuestIP, // e.g., "172.16.0.2/24"
-						Gateway: i.netCfg.HostIP,  // e.g., "172.16.0.1"
-					},
+					// Explicitly define guest IP configuration. These values must
+					// match the subnet configured on the host TAP device.
+					IPConfiguration: guestIP,
 				},
 			},
 		},
@@ -112,17 +149,10 @@ func (i *Instance) Start(ctx context.Context) error {
 		return fmt.Errorf("machine not configured")
 	}
 
-	// StartVMM launches the Firecracker process in the background.
-	// We use this instead of machine.Start() so our Go daemon remains responsive.
-	if err := i.machine.StartVMM(); err != nil {
-		return fmt.Errorf("start vmm process: %w", err)
-	}
-
-	// Send the InstanceStart action to boot the guest kernel.
+	// Start launches the Firecracker process, configures the microVM over the
+	// API socket, and sends the InstanceStart action to boot the guest OS.
 	if err := i.machine.Start(ctx); err != nil {
-		// If boot fails, ensure we clean up the VMM process we just started.
-		i.machine.StopVMM()
-		return fmt.Errorf("start guest os: %w", err)
+		return fmt.Errorf("start firecracker machine: %w", err)
 	}
 
 	return nil
