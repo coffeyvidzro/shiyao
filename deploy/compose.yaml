@@ -6,8 +6,8 @@ services:
       POSTGRES_DB: shiyao
       POSTGRES_USER: shiyao
       POSTGRES_PASSWORD: shiyao_dev_password
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -22,8 +22,8 @@ services:
     image: redis:8-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -35,7 +35,7 @@ services:
       - shiyao-control
 
   nats:
-    image: nats:2.11-alpine
+    image: nats:2.14.3-alpine
     restart: unless-stopped
     command: ["-c", "/etc/nats/nats-server.conf"]
     ports:
@@ -72,6 +72,7 @@ services:
 networks:
   shiyao-control:
     name: shiyao-control
+    driver: bridge
 
 volumes:
   postgres-data:
