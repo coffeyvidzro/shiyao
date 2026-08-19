@@ -11,15 +11,15 @@ const DefaultSchemaVersion = "v1alpha1"
 
 // Config is the declarative snapshot definition loaded from shiyao.yaml.
 type Config struct {
-	Version      string         `yaml:"version"`
-	Name         string         `yaml:"name"`
-	Description  string         `yaml:"description"`
-	Runtime      RuntimeConfig  `yaml:"runtime"`
-	Language     LanguageConfig `yaml:"language"`
-	Dependencies Dependencies   `yaml:"dependencies"`
-	Resources    Resources      `yaml:"resources"`
+	Version      string            `yaml:"version"`
+	Name         string            `yaml:"name"`
+	Description  string            `yaml:"description"`
+	Runtime      RuntimeConfig     `yaml:"runtime"`
+	Language     LanguageConfig    `yaml:"language"`
+	Dependencies Dependencies      `yaml:"dependencies"`
+	Resources    Resources         `yaml:"resources"`
 	Env          map[string]string `yaml:"env"`
-	Network      NetworkPolicy  `yaml:"network"`
+	Network      NetworkPolicy     `yaml:"network"`
 }
 
 type RuntimeConfig struct {
