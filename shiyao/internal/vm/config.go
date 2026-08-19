@@ -12,22 +12,14 @@ const (
 
 // Config contains the VM runtime configuration used to build the Firecracker instance.
 type Config struct {
-	// FirecrackerBin is the firecracker VMM executable used by the SDK process runner.
 	FirecrackerBin string
-	// KVMPath is the KVM device Firecracker requires for virtualization.
-	KVMPath string
-	// EnablePCI passes --enable-pci when launching Firecracker to use PCI VirtIO transport.
-	EnablePCI bool
-	// KernelPath is the absolute path to the guest kernel image.
-	KernelPath string
-	// RootfsPath is the absolute path to the guest root filesystem.
-	RootfsPath string
-	// VCPUCount is the number of virtual CPUs allocated to the VM.
-	VCPUCount int
-	// MemSizeMB is the amount of memory in MiB allocated to the VM.
-	MemSizeMB int
-	// BootArgs are the kernel command-line arguments passed to the guest.
-	BootArgs string
+	KVMPath        string
+	EnablePCI      bool
+	KernelPath     string
+	RootfsPath     string
+	VCPUCount      int
+	MemSizeMB      int
+	BootArgs       string
 }
 
 // DefaultConfig builds a sane default runtime configuration.
@@ -43,7 +35,6 @@ func DefaultConfig() Config {
 }
 
 // Validate checks if the configuration is valid for booting a VM.
-// It ensures that critical paths and resource limits are properly set.
 func (c Config) Validate() error {
 	if c.FirecrackerBin == "" {
 		return fmt.Errorf("firecracker binary path is required")

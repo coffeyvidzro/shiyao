@@ -33,14 +33,11 @@ func NewInstance(id, socketPath string, cfg Config, netCfg NetworkConfig) *Insta
 }
 
 // generateMAC creates a deterministic, locally-administered MAC address from the VM ID.
-// This prevents MAC collisions when running multiple VMs concurrently on the same host.
 func generateMAC(vmID string) string {
 	hash := sha256.Sum256([]byte(vmID))
-	// Set the locally administered bit (second least significant bit of the first byte)
-	// and clear the multicast bit to ensure it's a valid unicast MAC.
 	mac := net.HardwareAddr{
-		0x02,           // Locally administered
-		hash[0] & 0xFE, // Clear multicast bit
+		0x02,
+		hash[0] & 0xFE,
 		hash[1],
 		hash[2],
 		hash[3],
@@ -92,17 +89,14 @@ func (i *Instance) Configure(ctx context.Context) error {
 		return err
 	}
 
-	// 1. Setup Host Network (TAP device + Egress iptables rules)
 	cleanup, err := SetupNetwork(ctx, i.netCfg)
 	if err != nil {
 		return fmt.Errorf("setup network: %w", err)
 	}
 	i.cleanupNet = cleanup
 
-	// 2. Generate a unique MAC address for this specific VM
 	macAddr := generateMAC(i.ID)
 
-	// 3. Build the Firecracker SDK Configuration
 	guestIP, err := parseGuestIPConfig(i.netCfg)
 	if err != nil {
 		return err
@@ -134,17 +128,14 @@ func (i *Instance) Configure(ctx context.Context) error {
 		NetworkInterfaces: []fc.NetworkInterface{
 			{
 				StaticConfiguration: &fc.StaticNetworkConfiguration{
-					HostDevName: i.netCfg.TapName,
-					MacAddress:  macAddr,
-					// Explicitly define guest IP configuration. These values must
-					// match the subnet configured on the host TAP device.
+					HostDevName:     i.netCfg.TapName,
+					MacAddress:      macAddr,
 					IPConfiguration: guestIP,
 				},
 			},
 		},
 	}
 
-	// 4. Create the Machine object (does not start the VMM process yet)
 	opts := []fc.Opt{fc.WithProcessRunner(i.firecrackerCommand(ctx))}
 	machine, err := fc.NewMachine(ctx, fcConfig, opts...)
 	if err != nil {
@@ -161,8 +152,6 @@ func (i *Instance) Start(ctx context.Context) error {
 		return fmt.Errorf("machine not configured")
 	}
 
-	// Start launches the Firecracker process, configures the microVM over the
-	// API socket, and sends the InstanceStart action to boot the guest OS.
 	if err := i.machine.Start(ctx); err != nil {
 		return fmt.Errorf("start firecracker machine: %w", err)
 	}
@@ -173,19 +162,16 @@ func (i *Instance) Start(ctx context.Context) error {
 // Stop gracefully shuts down the VMM process and cleans up all host resources
 // (network rules, TAP device, and the Unix socket file).
 func (i *Instance) Stop(ctx context.Context) error {
-	// 1. Kill the Firecracker VMM process
 	if i.machine != nil {
 		i.machine.StopVMM()
 	}
 
-	// 2. Clean up network rules and TAP device
 	if i.cleanupNet != nil {
 		if err := i.cleanupNet(); err != nil {
 			fmt.Printf("warning: failed to cleanup network for vm %s: %v\n", i.ID, err)
 		}
 	}
 
-	// 3. Remove the Unix socket file from disk to prevent orphaned sockets
 	os.Remove(i.SocketPath)
 
 	return nil
