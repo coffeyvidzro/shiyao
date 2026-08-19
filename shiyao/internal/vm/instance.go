@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
 	models "github.com/firecracker-microvm/firecracker-go-sdk/client/models"
@@ -74,11 +75,21 @@ func parseIPNet(value string) (net.IPNet, error) {
 	return *ipNet, nil
 }
 
+func (i *Instance) firecrackerCommand(ctx context.Context) *exec.Cmd {
+	builder := fc.VMCommandBuilder{}.
+		WithBin(i.cfg.FirecrackerBin).
+		WithSocketPath(i.SocketPath)
+	if i.cfg.EnablePCI {
+		builder = builder.AddArgs("--enable-pci")
+	}
+	return builder.Build(ctx)
+}
+
 // Configure prepares the host network (TAP + iptables) and initializes the
 // Firecracker Machine struct without starting the VMM process yet.
 func (i *Instance) Configure(ctx context.Context) error {
-	if i.cfg.KernelPath == "" || i.cfg.RootfsPath == "" {
-		return fmt.Errorf("kernel and rootfs paths are required")
+	if err := i.cfg.Validate(); err != nil {
+		return err
 	}
 
 	// 1. Setup Host Network (TAP device + Egress iptables rules)
@@ -134,7 +145,8 @@ func (i *Instance) Configure(ctx context.Context) error {
 	}
 
 	// 4. Create the Machine object (does not start the VMM process yet)
-	machine, err := fc.NewMachine(ctx, fcConfig)
+	opts := []fc.Opt{fc.WithProcessRunner(i.firecrackerCommand(ctx))}
+	machine, err := fc.NewMachine(ctx, fcConfig, opts...)
 	if err != nil {
 		return fmt.Errorf("create firecracker machine: %w", err)
 	}
