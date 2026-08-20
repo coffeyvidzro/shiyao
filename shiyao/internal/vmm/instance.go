@@ -84,11 +84,11 @@ func (i *Instance) Configure(ctx context.Context) (retErr error) {
 		return fmt.Errorf("parse host/gateway IP %q: invalid IP", netCfg.HostIP)
 	}
 	fcConfig := fc.Config{
-		SocketPath: i.SocketPath,
-		Drives: []models.Drive{{DriveID: fc.String("rootfs"), PathOnHost: fc.String(i.cfg.RootfsPath), IsRootDevice: fc.Bool(true), IsReadOnly: fc.Bool(true)}},
-		MachineCfg: models.MachineConfiguration{VcpuCount: fc.Int64(int64(i.cfg.VCPUCount)), MemSizeMib: fc.Int64(int64(i.cfg.MemSizeMB))},
+		SocketPath:        i.SocketPath,
+		Drives:            []models.Drive{{DriveID: fc.String("rootfs"), PathOnHost: fc.String(i.cfg.RootfsPath), IsRootDevice: fc.Bool(true), IsReadOnly: fc.Bool(true)}},
+		MachineCfg:        models.MachineConfiguration{VcpuCount: fc.Int64(int64(i.cfg.VCPUCount)), MemSizeMib: fc.Int64(int64(i.cfg.MemSizeMB))},
 		NetworkInterfaces: []fc.NetworkInterface{{StaticConfiguration: &fc.StaticNetworkConfiguration{HostDevName: netCfg.TapName, MacAddress: generateMAC(i.ID), IPConfiguration: &fc.IPConfiguration{IPAddr: *guestNetwork, Gateway: gatewayIP}}}},
-		VsockDevices: []fc.VsockDevice{{ID: "vsock0", CID: i.vsockCfg.GuestCID}},
+		VsockDevices:      []fc.VsockDevice{{ID: "vsock0", CID: i.vsockCfg.GuestCID}},
 	}
 	var opts []fc.Opt
 	if i.snapCfg.EnableResume {
