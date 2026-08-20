@@ -23,6 +23,7 @@ const (
 	StateRunning
 	StateStopping
 	StateStopped
+	StateCleanupFailed
 )
 
 func (s State) String() string {
@@ -39,6 +40,8 @@ func (s State) String() string {
 		return "stopping"
 	case StateStopped:
 		return "stopped"
+	case StateCleanupFailed:
+		return "cleanup-failed"
 	default:
 		return "unknown"
 	}
@@ -117,28 +120,27 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 }
 
 // DestroyVM stops a VM instance and recycles its network/vsock resources.
+// The instance remains tracked while teardown is in progress so a failed
+// cleanup cannot race with a new VM using the same ID or IP/CID resources.
 func (m *Manager) DestroyVM(ctx context.Context, vmID string) error {
 	m.mu.Lock()
 	inst, exists := m.instances[vmID]
+	m.mu.Unlock()
 	if !exists {
-		m.mu.Unlock()
 		return fmt.Errorf("vm %s not found", vmID)
 	}
 
-	// Remove tracking to prevent concurrent actions during stop
+	// Perform physical stop and teardown outside manager lock. Stop transitions
+	// the instance to StateStopping, preventing concurrent lifecycle actions.
+	if err := inst.Stop(ctx); err != nil {
+		return fmt.Errorf("stop vm %s: %w", vmID, err)
+	}
+
+	// Release IPAM resources only after every cleanup step has succeeded.
+	m.mu.Lock()
 	delete(m.instances, vmID)
 	m.mu.Unlock()
-
-	// Perform physical stop and teardown outside manager lock
-	stopErr := inst.Stop(ctx)
-
-	// Only release IPAM resources after cleanup completes
-	// This prevents resource reuse while stale host resources may still exist
 	m.ipam.Release(inst.netCfg.GuestIP, inst.vsockCfg.GuestCID)
-
-	if stopErr != nil {
-		return fmt.Errorf("stop vm %s: %w", vmID, stopErr)
-	}
 
 	return nil
 }
@@ -217,7 +219,7 @@ func validateVMID(vmID string) error {
 		return fmt.Errorf("vm ID is too long")
 	}
 
-	if strings.ContainsAny(vmID, `/\:*?"<>|`) {
+	if strings.ContainsAny(vmID, `/\\:*?"<>|`) {
 		return fmt.Errorf("vm ID %q contains invalid characters", vmID)
 	}
 
