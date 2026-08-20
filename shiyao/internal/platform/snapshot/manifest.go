@@ -11,6 +11,7 @@ type Manifest struct {
 	ConfigDigest string    `yaml:"config_digest" json:"config_digest"`
 	KernelPath   string    `yaml:"kernel_path" json:"kernel_path"`
 	RootfsPath   string    `yaml:"rootfs_path" json:"rootfs_path"`
+	GuestAgent   string    `yaml:"guest_agent" json:"guest_agent"`
 	CreatedAt    time.Time `yaml:"created_at" json:"created_at"`
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,19 +15,23 @@ import (
 )
 
 type Builder struct {
-	Registry *Registry
-	Kernel   string
-	WorkDir  string
+	Registry   *Registry
+	Kernel     string
+	GuestAgent string
+	WorkDir    string
 }
 
-func NewBuilder(registry *Registry, kernel string) (*Builder, error) {
+func NewBuilder(registry *Registry, kernel, guestAgent string) (*Builder, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("snapshot registry is required")
 	}
 	if kernel == "" {
 		return nil, fmt.Errorf("kernel path is required")
 	}
-	return &Builder{Registry: registry, Kernel: kernel}, nil
+	if guestAgent == "" {
+		return nil, fmt.Errorf("guest agent path is required")
+	}
+	return &Builder{Registry: registry, Kernel: kernel, GuestAgent: guestAgent}, nil
 }
 
 func (b *Builder) Build(cfg Config, rootfs string) (Manifest, error) {
@@ -38,6 +43,9 @@ func (b *Builder) Build(cfg Config, rootfs string) (Manifest, error) {
 	}
 	if _, err := os.Stat(b.Kernel); err != nil {
 		return Manifest{}, fmt.Errorf("stat kernel: %w", err)
+	}
+	if _, err := os.Stat(b.GuestAgent); err != nil {
+		return Manifest{}, fmt.Errorf("stat guest agent: %w", err)
 	}
 	if _, err := exec.LookPath("debootstrap"); err != nil {
 		return Manifest{}, fmt.Errorf("debootstrap is required: %w", err)
@@ -60,6 +68,9 @@ func (b *Builder) Build(cfg Config, rootfs string) (Manifest, error) {
 	}
 	if err := b.buildRootfs(context.Background(), cfg, rootDir); err != nil {
 		return Manifest{}, err
+	}
+	if err := installGuestAgent(rootDir, b.GuestAgent); err != nil {
+		return Manifest{}, fmt.Errorf("install guest agent: %w", err)
 	}
 	if err := writeEnvironment(rootDir, cfg.Env); err != nil {
 		return Manifest{}, fmt.Errorf("write environment: %w", err)
@@ -117,6 +128,27 @@ func (b *Builder) buildRootfs(ctx context.Context, cfg Config, rootDir string) e
 	return nil
 }
 
+func installGuestAgent(rootDir, guestAgent string) error {
+	dst := filepath.Join(rootDir, "usr", "local", "bin", "shiyao-agent")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	src, err := os.Open(guestAgent)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+	if _, err := io.Copy(dstFile, src); err != nil {
+		return err
+	}
+	return dstFile.Chmod(0o755)
+}
+
 func installLanguage(ctx context.Context, rootDir string, language LanguageConfig) error {
 	if language.Name == "" {
 		return nil
@@ -158,7 +190,6 @@ func runCommand(ctx context.Context, name string, args ...string) error {
 	}
 	return nil
 }
-
 func writeEnvironment(rootDir string, env map[string]string) error {
 	if len(env) == 0 {
 		return nil
@@ -176,7 +207,6 @@ func writeEnvironment(rootDir string, env map[string]string) error {
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
-
 func createFilesystemImage(rootDir, output string, diskMB int) error {
 	if _, err := exec.LookPath("mkfs.ext4"); err != nil {
 		return fmt.Errorf("mkfs.ext4 is required: %w", err)
@@ -206,7 +236,6 @@ func createFilesystemImage(rootDir, output string, diskMB int) error {
 	}
 	return nil
 }
-
 func configDigest(cfg Config) string {
 	payload := fmt.Sprintf("%#v", cfg)
 	sum := sha256.Sum256([]byte(payload))

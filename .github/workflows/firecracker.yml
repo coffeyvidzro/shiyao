@@ -1,0 +1,38 @@
+name: Firecracker Integration
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  firecracker:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check KVM availability
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "KVM is not available on this GitHub-hosted runner."
+            exit 1
+          fi
+          ls -l /dev/kvm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: shiyao/go.mod
+          cache-dependency-path: shiyao/go.sum
+
+      - name: Build guest agent
+        working-directory: shiyao
+        run: |
+          mkdir -p ../testdata
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -o ../testdata/shiyao-agent ./cmd/guest-agent
+
+      - name: Run Firecracker integration tests
+        working-directory: shiyao
+        run: go test -tags=integration ./internal/vm/... -v -count=1
