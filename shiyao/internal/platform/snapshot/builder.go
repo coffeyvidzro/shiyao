@@ -83,12 +83,26 @@ func (b *Builder) Build(ctx context.Context, cfg Config, rootfs string) (Manifes
 		return Manifest{}, err
 	}
 
+	// ------------------------------------------------------------------------
+	// 1. Upload Kernel and RootFS Artifacts to Registry Storage
+	// ------------------------------------------------------------------------
+	if err := b.Registry.PushArtifact(ctx, cfg.Name, "vmlinux", b.Kernel); err != nil {
+		return Manifest{}, fmt.Errorf("upload kernel artifact: %w", err)
+	}
+
+	if err := b.Registry.PushArtifact(ctx, cfg.Name, "rootfs.ext4", rootfs); err != nil {
+		return Manifest{}, fmt.Errorf("upload rootfs artifact: %w", err)
+	}
+
+	// ------------------------------------------------------------------------
+	// 2. Publish Manifest referencing relative object locations
+	// ------------------------------------------------------------------------
 	manifest := Manifest{
 		Version:      ManifestVersion,
 		Name:         cfg.Name,
 		ConfigDigest: configDigest(cfg),
-		KernelPath:   filepath.Clean(b.Kernel),
-		RootfsPath:   filepath.Clean(rootfs),
+		KernelPath:   "vmlinux",     // Relative registry key relative to cfg.Name
+		RootfsPath:   "rootfs.ext4", // Relative registry key relative to cfg.Name
 		GuestAgent:   filepath.Clean(b.GuestAgent),
 		CreatedAt:    time.Now().UTC(),
 	}
