@@ -13,6 +13,8 @@ func TestExecRequest_Validate(t *testing.T) {
 		{name: "missing request id", req: ExecRequest{Version: ProtocolVersion, Command: "/bin/ls"}, wantErr: true},
 		{name: "missing command", req: ExecRequest{Version: ProtocolVersion, ID: "req-1"}, wantErr: true},
 		{name: "negative timeout", req: ExecRequest{Version: ProtocolVersion, ID: "req-1", Command: "/bin/ls", TimeoutMS: -500}, wantErr: true},
+		{name: "dangerous environment", req: ExecRequest{Version: ProtocolVersion, ID: "req-1", Command: "/bin/true", Env: map[string]string{"LD_PRELOAD": "/tmp/evil.so"}}, wantErr: true},
+		{name: "excessive timeout", req: ExecRequest{Version: ProtocolVersion, ID: "req-1", Command: "/bin/true", TimeoutMS: MaxTimeoutMS + 1}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
