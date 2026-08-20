@@ -19,6 +19,10 @@ jobs:
           go-version-file: shiyao/go.mod
           cache-dependency-path: shiyao/go.sum
 
+      - name: Check formatting
+        working-directory: shiyao
+        run: test -z "$(gofmt -l .)"
+
       - name: Test
         working-directory: shiyao
         run: go test ./...
