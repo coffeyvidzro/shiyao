@@ -3,10 +3,12 @@ package vm
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strings"
+	"sync"
 
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
 	models "github.com/firecracker-microvm/firecracker-go-sdk/client/models"
@@ -20,7 +22,9 @@ type SnapshotConfig struct {
 }
 
 type Instance struct {
+	mu         sync.Mutex
 	ID         string
+	InstanceID string // Random instance ID for host resource naming
 	SocketPath string
 	cfg        Config
 	netCfg     NetworkConfig
@@ -28,6 +32,7 @@ type Instance struct {
 	snapCfg    SnapshotConfig
 	machine    *fc.Machine
 	cleanups   []func() error
+	state      State
 }
 
 func NewInstance(
@@ -39,11 +44,13 @@ func NewInstance(
 ) *Instance {
 	return &Instance{
 		ID:         id,
+		InstanceID: "", // Will be set during Configure if needed
 		SocketPath: socketPath,
 		cfg:        cfg,
 		netCfg:     netCfg,
 		vsockCfg:   vsockCfg,
 		snapCfg:    snapCfg,
+		state:      StateCreated,
 	}
 }
 
@@ -62,17 +69,52 @@ func guestKernelArgs(bootArgs, guestAgentPath string) string {
 }
 
 func (i *Instance) Configure(ctx context.Context) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	if i.state != StateCreated {
+		return fmt.Errorf("instance %s cannot be configured in state %s", i.ID, i.state)
+	}
+	i.state = StateConfiguring
+
+	// Generate random instance ID for host resource naming
+	var err error
+	i.InstanceID, err = generateInstanceID()
+	if err != nil {
+		return fmt.Errorf("generate instance ID: %w", err)
+	}
+
+	// Update TAP name to use instance ID for unpredictable naming
+	i.netCfg.TapName = uniqueTapNameWithInstanceID(i.InstanceID)
+
 	if err := i.cfg.Validate(); err != nil {
+		i.state = StateCreated
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
+	// Use rollback pattern to clean up on configuration failure
+	configured := false
+	defer func() {
+		if !configured {
+			// Rollback cleanups in reverse order
+			for j := len(i.cleanups) - 1; j >= 0; j-- {
+				if cleanupErr := i.cleanups[j](); cleanupErr != nil {
+					fmt.Printf("warning: rollback cleanup failed for vm %s: %v\n", i.ID, cleanupErr)
+				}
+			}
+			i.cleanups = nil
+		}
+	}()
+
 	// 1. Provision host TAP network and firewall isolation
 	if err := SetupTAP(ctx, i.netCfg); err != nil {
+		i.state = StateCreated
 		return fmt.Errorf("setup tap: %w", err)
 	}
 	i.cleanups = append(i.cleanups, func() error { return CleanupTAP(ctx, i.netCfg.TapName) })
 
 	if err := SetupFirewall(ctx, i.netCfg); err != nil {
+		i.state = StateCreated
 		return fmt.Errorf("setup firewall: %w", err)
 	}
 	i.cleanups = append(i.cleanups, func() error { return CleanupFirewall(ctx, i.netCfg) })
@@ -80,11 +122,13 @@ func (i *Instance) Configure(ctx context.Context) error {
 	macAddr := generateMAC(i.ID)
 	guestIP, guestNetwork, err := net.ParseCIDR(i.netCfg.GuestIP)
 	if err != nil {
+		i.state = StateCreated
 		return fmt.Errorf("parse guest IP %q: %w", i.netCfg.GuestIP, err)
 	}
 	guestNetwork.IP = guestIP
 	gatewayIP := net.ParseIP(i.netCfg.HostIP)
 	if gatewayIP == nil {
+		i.state = StateCreated
 		return fmt.Errorf("parse host/gateway IP %q: invalid IP", i.netCfg.HostIP)
 	}
 
@@ -118,6 +162,7 @@ func (i *Instance) Configure(ctx context.Context) error {
 	var opts []fc.Opt
 	if i.snapCfg.EnableResume {
 		if i.snapCfg.MemFilePath == "" || i.snapCfg.StateFilePath == "" {
+			i.state = StateCreated
 			return fmt.Errorf("snapshot restore enabled but snapshot paths are missing")
 		}
 
@@ -132,13 +177,23 @@ func (i *Instance) Configure(ctx context.Context) error {
 	// 4. Instantiate Machine
 	machine, err := fc.NewMachine(ctx, fcConfig, opts...)
 	if err != nil {
+		i.state = StateCreated
 		return fmt.Errorf("create firecracker machine: %w", err)
 	}
 	i.machine = machine
+	configured = true
+	i.state = StateConfigured
 	return nil
 }
 
 func (i *Instance) Start(ctx context.Context) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	if i.state != StateConfigured {
+		return fmt.Errorf("instance %s cannot be started in state %s", i.ID, i.state)
+	}
+
 	if i.machine == nil {
 		return fmt.Errorf("machine not configured")
 	}
@@ -148,28 +203,54 @@ func (i *Instance) Start(ctx context.Context) error {
 		if err := i.machine.ResumeVM(ctx); err != nil {
 			return fmt.Errorf("resume microvm snapshot: %w", err)
 		}
+		i.state = StateRunning
 		return nil
 	}
 
 	if err := i.machine.Start(ctx); err != nil {
 		return fmt.Errorf("start guest os: %w", err)
 	}
+	i.state = StateRunning
 	return nil
 }
 
 func (i *Instance) Stop(ctx context.Context) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	// Allow Stop to be called from Running or Configured state
+	if i.state != StateRunning && i.state != StateConfigured {
+		// Already stopped or stopping - return nil for idempotency
+		return nil
+	}
+	i.state = StateStopping
+
+	var errs []error
+
 	if i.machine != nil {
 		if err := i.machine.StopVMM(); err != nil {
-			fmt.Printf("warning: stop vmm failed for vm %s: %v\n", i.ID, err)
+			errs = append(errs, fmt.Errorf("stop vmm: %w", err))
 		}
 	}
+
+	// Execute cleanups in reverse order and collect all errors
 	for j := len(i.cleanups) - 1; j >= 0; j-- {
 		if err := i.cleanups[j](); err != nil {
-			fmt.Printf("warning: cleanup failed for vm %s: %v\n", i.ID, err)
+			errs = append(errs, fmt.Errorf("cleanup step %d: %w", j, err))
 		}
 	}
+
+	// Clean up socket file
 	if err := os.Remove(i.SocketPath); err != nil && !os.IsNotExist(err) {
-		fmt.Printf("warning: remove socket failed for vm %s: %v\n", i.ID, err)
+		errs = append(errs, fmt.Errorf("remove socket: %w", err))
+	}
+
+	// Clear cleanups after execution
+	i.cleanups = nil
+	i.state = StateStopped
+
+	if len(errs) > 0 {
+		return fmt.Errorf("stop instance %s: %w", i.ID, errors.Join(errs...))
 	}
 	return nil
 }
