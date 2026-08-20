@@ -65,39 +65,46 @@ func TestEphemeralOverlayDiscardsWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := unix.Mount("overlay", merged, "overlay", 0,
-		"lowerdir="+lower+",upperdir="+upper+",workdir="+work"); err != nil {
+	mountOptions := "lowerdir=" + lower + ",upperdir=" + upper + ",workdir=" + work
+	if err := unix.Mount("overlay", merged, "overlay", 0, mountOptions); err != nil {
 		t.Skipf("overlayfs unavailable: %v", err)
 	}
 
+	mounted := true
+	cleanup := func() {
+		if mounted {
+			_ = unix.Unmount(merged, unix.MNT_DETACH)
+		}
+	}
+	defer cleanup()
+
 	writePath := filepath.Join(merged, "created.txt")
 	if err := os.WriteFile(writePath, []byte("ephemeral"), 0600); err != nil {
-		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatalf("write through overlay: %v", err)
 	}
+
 	updated := filepath.Join(merged, "immutable.txt")
 	if err := os.WriteFile(updated, []byte("changed"), 0600); err != nil {
-		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatalf("modify through overlay: %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(lower, "created.txt")); !os.IsNotExist(err) {
-		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatalf("created file leaked into lower layer: %v", err)
 	}
+
 	contents, err := os.ReadFile(original)
 	if err != nil {
-		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatal(err)
 	}
 	if string(contents) != "base" {
-		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatalf("lower layer changed to %q", contents)
 	}
 
 	if err := unix.Unmount(merged, unix.MNT_DETACH); err != nil {
 		t.Fatal(err)
 	}
+	mounted = false
+
 	if _, err := os.Stat(writePath); !os.IsNotExist(err) {
 		t.Fatalf("ephemeral file remained after unmount: %v", err)
 	}
