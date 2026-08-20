@@ -8,12 +8,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// setupEphemeralRootfs puts an overlay filesystem over the immutable root
-// filesystem. The upper and work layers live on tmpfs, so all guest writes
-// disappear when the VM stops. The original root mount is retained only until
-// pivot_root completes and is then detached.
+// setupEphemeralRootfs overlays the immutable Firecracker root filesystem with
+// an upper/work layer stored on tmpfs. The tmpfs is placed below /dev so that
+// the /dev mount can be moved into the new root before the old root is detached.
 func setupEphemeralRootfs() error {
-	base := "/run/shiyao-overlay"
+	base := "/dev/shm/shiyao-overlay"
 	upper := filepath.Join(base, "upper")
 	work := filepath.Join(base, "work")
 	newRoot := filepath.Join(base, "newroot")
@@ -38,7 +37,7 @@ func setupEphemeralRootfs() error {
 	}
 	if err := os.Chdir("/"); err != nil { return fmt.Errorf("chdir new root: %w", err) }
 
-	// Preserve the kernel pseudo-filesystems from the original root mount.
+	// Move kernel pseudo-filesystems from the original root into the overlay.
 	for _, name := range []string{"proc", "sys", "dev", "run"} {
 		src := filepath.Join("/.oldroot", name)
 		dst := filepath.Join("/", name)
