@@ -9,221 +9,84 @@ import (
 	"github.com/coreos/go-iptables/iptables"
 )
 
-// firewallMu serializes all iptables mutations to prevent race conditions
-// when multiple VMs are being created/destroyed concurrently.
 var firewallMu sync.Mutex
 
 const (
-	// Default port for host-side authenticating egress proxy (e.g., Envoy, Squid, or Tinyproxy).
-	HostProxyPort = 8080
-	// Cloud Metadata Service IP (AWS, GCP, Azure, OpenStack).
+	HostProxyPort   = 8080
 	CloudMetadataIP = "169.254.169.254/32"
 )
 
-// SetupFirewall installs per-VM security rules.
-//
-// Rules configured:
-// 1. Drop traffic targeting 169.254.169.254 (SSRF protection).
-// 2. Allow established/related return traffic.
-// 3. Allow DNS requests to host interface.
-// 4. Allow TCP traffic to the Host/Gateway Proxy Port.
-// 5. Allow TCP traffic to the HostIP on configured AllowedPorts.
-// 6. Default DROP all other direct egress attempts.
-//
-// AllowedPorts are destination ports on the VM's HostIP gateway. They do not
-// grant access to the same ports on arbitrary remote addresses. Direct internet
-// egress remains blocked unless the host explicitly routes it through an allowed
-// host-side service.
 func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 	_ = ctx
-
-	if cfg.TapName == "" {
-		return fmt.Errorf("tap name is empty")
-	}
-	if cfg.HostIP == "" {
-		return fmt.Errorf("host IP is empty")
-	}
+	if cfg.TapName == "" { return fmt.Errorf("tap name is empty") }
+	if cfg.HostIP == "" { return fmt.Errorf("host IP is empty") }
+	if strings.Contains(cfg.HostIP, ":") { return fmt.Errorf("IPv6 host gateways are not supported") }
 
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
 
 	ipt, err := iptables.New()
-	if err != nil {
-		return fmt.Errorf("init iptables: %w", err)
-	}
-
+	if err != nil { return fmt.Errorf("init iptables: %w", err) }
 	chain := firewallChainName(cfg.TapName)
-
-	// Create dedicated filter chain for this VM.
-	if err := ipt.NewChain("filter", chain); err != nil {
-		return fmt.Errorf("create chain %s: %w", chain, err)
-	}
-
-	// Rollback cleanup helper.
+	if err := ipt.NewChain("filter", chain); err != nil { return fmt.Errorf("create chain %s: %w", chain, err) }
 	cleanup := func() {
 		_ = ipt.Delete("filter", "FORWARD", "-i", cfg.TapName, "-j", chain)
-		_ = ipt.Delete(
-			"filter",
-			"FORWARD",
-			"-o", cfg.TapName,
-			"-m", "conntrack",
-			"--ctstate", "ESTABLISHED,RELATED",
-			"-j", "ACCEPT",
-		)
-		_ = ipt.ClearChain("filter", chain)
-		_ = ipt.DeleteChain("filter", chain)
+		_ = ipt.Delete("filter", "FORWARD", "-o", cfg.TapName, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
+		_ = ipt.ClearChain("filter", chain); _ = ipt.DeleteChain("filter", chain)
 	}
-
-	// 1. RULE: Block Cloud Metadata Endpoint (169.254.169.254) immediately.
-	if err := ipt.Append("filter", chain, "-d", CloudMetadataIP, "-j", "DROP"); err != nil {
-		cleanup()
-		return fmt.Errorf("add metadata block rule: %w", err)
-	}
-
-	// 2. RULE: Allow Established/Related traffic from guest.
-	if err := ipt.Append(
-		"filter",
-		chain,
-		"-m", "conntrack",
-		"--ctstate", "ESTABLISHED,RELATED",
-		"-j", "ACCEPT",
-	); err != nil {
-		cleanup()
-		return fmt.Errorf("allow established traffic: %w", err)
-	}
-
-	// 3. RULE: Allow UDP DNS queries targeting Host IP (172.16.x.1).
-	if err := ipt.Append(
-		"filter",
-		chain,
-		"-p", "udp",
-		"-d", cfg.HostIP,
-		"--dport", "53",
-		"-j", "ACCEPT",
-	); err != nil {
-		cleanup()
-		return fmt.Errorf("allow host UDP DNS: %w", err)
-	}
-
-	// 4. RULE: Allow TCP connection targeting Host Proxy Port ONLY.
-	if err := ipt.Append(
-		"filter",
-		chain,
-		"-p", "tcp",
-		"-d", cfg.HostIP,
-		"--dport", fmt.Sprintf("%d", HostProxyPort),
-		"-j", "ACCEPT",
-	); err != nil {
-		cleanup()
-		return fmt.Errorf("allow proxy port traffic: %w", err)
-	}
-
-	// 5. RULE: Allow configured TCP ports only on the host/gateway address.
+	if err := ipt.Append("filter", chain, "-d", CloudMetadataIP, "-j", "DROP"); err != nil { cleanup(); return fmt.Errorf("add metadata block rule: %w", err) }
+	if err := ipt.Append("filter", chain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"); err != nil { cleanup(); return fmt.Errorf("allow established traffic: %w", err) }
+	if err := ipt.Append("filter", chain, "-p", "udp", "-d", cfg.HostIP, "--dport", "53", "-j", "ACCEPT"); err != nil { cleanup(); return fmt.Errorf("allow host UDP DNS: %w", err) }
+	if err := ipt.Append("filter", chain, "-p", "tcp", "-d", cfg.HostIP, "--dport", fmt.Sprintf("%d", HostProxyPort), "-j", "ACCEPT"); err != nil { cleanup(); return fmt.Errorf("allow proxy port traffic: %w", err) }
 	for _, port := range cfg.AllowedPorts {
-		if port < 1 || port > 65535 {
-			cleanup()
-			return fmt.Errorf("invalid allowed port %d", port)
-		}
-		if port == HostProxyPort {
-			continue
-		}
-		if err := ipt.Append(
-			"filter",
-			chain,
-			"-p", "tcp",
-			"-d", cfg.HostIP,
-			"--dport", fmt.Sprintf("%d", port),
-			"-j", "ACCEPT",
-		); err != nil {
-			cleanup()
-			return fmt.Errorf("allow configured host port %d traffic: %w", port, err)
-		}
+		if port < 1 || port > 65535 { cleanup(); return fmt.Errorf("invalid allowed port %d", port) }
+		if port == HostProxyPort { continue }
+		if err := ipt.Append("filter", chain, "-p", "tcp", "-d", cfg.HostIP, "--dport", fmt.Sprintf("%d", port), "-j", "ACCEPT"); err != nil { cleanup(); return fmt.Errorf("allow configured host port %d traffic: %w", port, err) }
 	}
+	if err := ipt.Append("filter", chain, "-j", "DROP"); err != nil { cleanup(); return fmt.Errorf("add default drop rule: %w", err) }
+	if err := ipt.Append("filter", "FORWARD", "-i", cfg.TapName, "-j", chain); err != nil { cleanup(); return fmt.Errorf("attach guest ingress rule: %w", err) }
+	if err := ipt.Append("filter", "FORWARD", "-o", cfg.TapName, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"); err != nil { cleanup(); return fmt.Errorf("allow return traffic rule: %w", err) }
 
-	// 6. RULE: Default DROP for all other egress attempts.
-	if err := ipt.Append("filter", chain, "-j", "DROP"); err != nil {
-		cleanup()
-		return fmt.Errorf("add default drop rule: %w", err)
+	// A VM with no configured IPv6 address can still generate IPv6 link-local
+	// or raw packets. Keep ip6tables forwarding closed so IPv6 cannot bypass
+	// the IPv4 egress policy.
+	ip6t, err := iptables.NewWithProtocol(iptables.ProtocolIPv6)
+	if err != nil { cleanup(); return fmt.Errorf("init ip6tables: %w", err) }
+	v6Chain := firewallIPv6ChainName(cfg.TapName)
+	if err := ip6t.NewChain("filter", v6Chain); err != nil { cleanup(); return fmt.Errorf("create IPv6 chain %s: %w", v6Chain, err) }
+	v6Cleanup := func() {
+		_ = ip6t.Delete("filter", "FORWARD", "-i", cfg.TapName, "-j", v6Chain)
+		_ = ip6t.ClearChain("filter", v6Chain); _ = ip6t.DeleteChain("filter", v6Chain)
 	}
+	if err := ip6t.Append("filter", v6Chain, "-j", "DROP"); err != nil { v6Cleanup(); cleanup(); return fmt.Errorf("add IPv6 default drop: %w", err) }
+	if err := ip6t.Append("filter", "FORWARD", "-i", cfg.TapName, "-j", v6Chain); err != nil { v6Cleanup(); cleanup(); return fmt.Errorf("attach IPv6 guest rule: %w", err) }
 
-	// 7. ATTACH: Send guest TAP ingress traffic to custom VM chain.
-	if err := ipt.Append("filter", "FORWARD", "-i", cfg.TapName, "-j", chain); err != nil {
-		cleanup()
-		return fmt.Errorf("attach guest ingress rule: %w", err)
-	}
-
-	// 8. ATTACH: Allow return traffic from host to guest TAP interface.
-	if err := ipt.Append(
-		"filter",
-		"FORWARD",
-		"-o", cfg.TapName,
-		"-m", "conntrack",
-		"--ctstate", "ESTABLISHED,RELATED",
-		"-j", "ACCEPT",
-	); err != nil {
-		cleanup()
-		return fmt.Errorf("allow return traffic rule: %w", err)
-	}
-
-	// NOTE: MASQUERADE NAT rule is intentionally omitted to disable direct guest-to-internet routing.
 	return nil
 }
 
-// CleanupFirewall removes the VM-specific filtering chain and forward attachments.
 func CleanupFirewall(ctx context.Context, cfg NetworkConfig) error {
 	_ = ctx
-
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
-
-	ipt, err := iptables.New()
-	if err != nil {
-		return fmt.Errorf("init iptables: %w", err)
-	}
-
+	firewallMu.Lock(); defer firewallMu.Unlock()
+	ipt, err := iptables.New(); if err != nil { return fmt.Errorf("init iptables: %w", err) }
 	chain := firewallChainName(cfg.TapName)
 	var errs []string
+	if err := ipt.Delete("filter", "FORWARD", "-i", cfg.TapName, "-j", chain); err != nil && !isRuleNotFound(err) { errs = append(errs, fmt.Sprintf("delete ingress hook: %v", err)) }
+	if err := ipt.Delete("filter", "FORWARD", "-o", cfg.TapName, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"); err != nil && !isRuleNotFound(err) { errs = append(errs, fmt.Sprintf("delete egress return hook: %v", err)) }
+	if err := ipt.ClearChain("filter", chain); err != nil && !isChainNotFound(err) { errs = append(errs, fmt.Sprintf("clear chain %s: %v", chain, err)) }
+	if err := ipt.DeleteChain("filter", chain); err != nil && !isChainNotFound(err) { errs = append(errs, fmt.Sprintf("delete chain %s: %v", chain, err)) }
 
-	// Delete forward hook rules.
-	if err := ipt.Delete("filter", "FORWARD", "-i", cfg.TapName, "-j", chain); err != nil && !isRuleNotFound(err) {
-		errs = append(errs, fmt.Sprintf("delete ingress hook: %v", err))
-	}
-
-	if err := ipt.Delete(
-		"filter",
-		"FORWARD",
-		"-o", cfg.TapName,
-		"-m", "conntrack",
-		"--ctstate", "ESTABLISHED,RELATED",
-		"-j", "ACCEPT",
-	); err != nil && !isRuleNotFound(err) {
-		errs = append(errs, fmt.Sprintf("delete egress return hook: %v", err))
-	}
-
-	// Flush and delete isolated chain.
-	if err := ipt.ClearChain("filter", chain); err != nil && !isChainNotFound(err) {
-		errs = append(errs, fmt.Sprintf("clear chain %s: %v", chain, err))
-	}
-
-	if err := ipt.DeleteChain("filter", chain); err != nil && !isChainNotFound(err) {
-		errs = append(errs, fmt.Sprintf("delete chain %s: %v", chain, err))
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("firewall cleanup failed: %s", strings.Join(errs, "; "))
-	}
-
+	ip6t, err := iptables.NewWithProtocol(iptables.ProtocolIPv6)
+	if err == nil {
+		v6Chain := firewallIPv6ChainName(cfg.TapName)
+		if err := ip6t.Delete("filter", "FORWARD", "-i", cfg.TapName, "-j", v6Chain); err != nil && !isRuleNotFound(err) { errs = append(errs, fmt.Sprintf("delete IPv6 hook: %v", err)) }
+		if err := ip6t.ClearChain("filter", v6Chain); err != nil && !isChainNotFound(err) { errs = append(errs, fmt.Sprintf("clear IPv6 chain %s: %v", v6Chain, err)) }
+		if err := ip6t.DeleteChain("filter", v6Chain); err != nil && !isChainNotFound(err) { errs = append(errs, fmt.Sprintf("delete IPv6 chain %s: %v", v6Chain, err)) }
+	} else { errs = append(errs, fmt.Sprintf("init ip6tables during cleanup: %v", err)) }
+	if len(errs) > 0 { return fmt.Errorf("firewall cleanup failed: %s", strings.Join(errs, "; ")) }
 	return nil
 }
 
-func firewallChainName(tapName string) string {
-	return fmt.Sprintf("SHIYAO_%s", tapName)
-}
-
-func isRuleNotFound(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "does a matching rule exist")
-}
-
-func isChainNotFound(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no chain")
-}
+func firewallChainName(tapName string) string { return fmt.Sprintf("SHIYAO_%s", tapName) }
+func firewallIPv6ChainName(tapName string) string { return fmt.Sprintf("SHIYAO6_%s", tapName) }
+func isRuleNotFound(err error) bool { return err != nil && strings.Contains(strings.ToLower(err.Error()), "does a matching rule exist") }
+func isChainNotFound(err error) bool { return err != nil && strings.Contains(strings.ToLower(err.Error()), "no chain") }

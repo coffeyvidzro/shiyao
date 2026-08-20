@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mdlayher/vsock"
-
 	"github.com/coffeyvidzro/shiyao/internal/vm"
 )
+
+var commandSlots = make(chan struct{}, vm.MaxConcurrentCommands)
 
 func main() {
 	if err := run(); err != nil {
@@ -25,6 +27,10 @@ func main() {
 }
 
 func run() error {
+	if err := setupEphemeralRootfs(); err != nil {
+		return err
+	}
+
 	listener, err := vsock.Listen(vm.GuestVsockPort, nil)
 	if err != nil {
 		return fmt.Errorf("listen on guest vsock port %d: %w", vm.GuestVsockPort, err)
@@ -43,7 +49,11 @@ func run() error {
 func serve(conn io.ReadWriteCloser) {
 	defer conn.Close()
 
-	// Wrap connection with size limit to prevent memory exhaustion.
+	if !authorizedHost(conn) {
+		sendError(conn, errors.New("unauthorized vsock peer"))
+		return
+	}
+
 	limitedConn := io.LimitReader(conn, vm.MaxRequestBytes)
 	decoder := json.NewDecoder(bufio.NewReader(limitedConn))
 	decoder.DisallowUnknownFields()
@@ -62,18 +72,25 @@ func serve(conn io.ReadWriteCloser) {
 	_, _ = conn.Write(payload)
 }
 
+func authorizedHost(conn io.ReadWriteCloser) bool {
+	c, ok := conn.(*vsock.Conn)
+	if !ok {
+		return false
+	}
+	addr, ok := c.RemoteAddr().(*vsock.Addr)
+	return ok && addr.CID == 2
+}
+
 func sendError(conn io.Writer, err error) {
 	result := vm.ExecResult{
 		Version:  vm.ProtocolVersion,
-		ID:       "",
 		ExitCode: -1,
 		Error:    err.Error(),
 	}
 	payload, encodeErr := vm.EncodeMessage(result)
-	if encodeErr != nil {
-		return
+	if encodeErr == nil {
+		_, _ = conn.Write(payload)
 	}
-	_, _ = conn.Write(payload)
 }
 
 func execute(req vm.ExecRequest) vm.ExecResult {
@@ -82,9 +99,16 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 		ID:       req.ID,
 		ExitCode: -1,
 	}
-
 	if err := req.Validate(); err != nil {
 		result.Error = err.Error()
+		return result
+	}
+
+	select {
+	case commandSlots <- struct{}{}:
+		defer func() { <-commandSlots }()
+	default:
+		result.Error = "guest command concurrency limit reached"
 		return result
 	}
 
@@ -95,21 +119,43 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	}
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, req.Command, req.Args...)
-
-	// Load base environment + /etc/shiyao-env
+	cmd := exec.Command(req.Command, req.Args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid:   true,
+		Pdeathsig: syscall.SIGKILL,
+	}
 	cmd.Env = loadPresetEnv()
 	for key, value := range req.Env {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 
-	// Capture stdout and stderr with bounded buffers to prevent memory exhaustion.
 	stdoutBuf := &limitedBuffer{limit: vm.MaxOutputBytes}
 	stderrBuf := &limitedBuffer{limit: vm.MaxOutputBytes}
 	cmd.Stdout = stdoutBuf
 	cmd.Stderr = stderrBuf
 
-	err := cmd.Run()
+	cleanupCgroup, err := startWithResourceLimits(cmd)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	var waitErr error
+	select {
+	case waitErr = <-waitCh:
+	case <-ctx.Done():
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		waitErr = <-waitCh
+		result.Error = ctx.Err().Error()
+	}
+
+	if err := cleanupCgroup(); err != nil && result.Error == "" {
+		result.Error = fmt.Sprintf("cleanup command cgroup: %v", err)
+	}
+
 	result.Stdout = stdoutBuf.String()
 	result.Stderr = stderrBuf.String()
 	if stdoutBuf.truncated {
@@ -118,22 +164,17 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	if stderrBuf.truncated {
 		result.Stderr += "\n[OUTPUT TRUNCATED DUE TO SIZE LIMIT]"
 	}
-
-	if err == nil {
+	if waitErr == nil {
 		result.ExitCode = 0
 		return result
 	}
 
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if errors.As(waitErr, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
-	} else {
-		result.Error = err.Error()
-		if ctx.Err() != nil {
-			result.Error = ctx.Err().Error()
-		}
+	} else if result.Error == "" {
+		result.Error = waitErr.Error()
 	}
-
 	return result
 }
 
@@ -143,8 +184,7 @@ func loadPresetEnv() []string {
 	if err != nil {
 		return env
 	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" && !strings.HasPrefix(line, "#") {
 			env = append(env, line)
@@ -153,7 +193,6 @@ func loadPresetEnv() []string {
 	return env
 }
 
-// limitedBuffer is a bounded buffer that discards data after reaching its limit.
 type limitedBuffer struct {
 	limit     int
 	buf       []byte
@@ -162,25 +201,18 @@ type limitedBuffer struct {
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	if b.truncated {
-		// Already at the limit; transparently consume subsequent writes.
 		return len(p), nil
 	}
-
 	remaining := b.limit - len(b.buf)
 	if remaining <= 0 {
 		b.truncated = true
 		return len(p), nil
 	}
-
 	if len(p) > remaining {
 		b.buf = append(b.buf, p[:remaining]...)
 		b.truncated = true
-		// A bounded writer must report the entire input as consumed even though
-		// only the prefix was retained. This prevents os/exec from treating the
-		// intentional truncation as an io.ErrShortWrite failure.
 		return len(p), nil
 	}
-
 	b.buf = append(b.buf, p...)
 	return len(p), nil
 }
