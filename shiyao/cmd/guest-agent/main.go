@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coffeyvidzro/shiyao/internal/vm"
+	vm "github.com/coffeyvidzro/shiyao/internal/vsock"
 	"github.com/mdlayher/vsock"
 )
 
@@ -31,9 +31,9 @@ func run() error {
 		return err
 	}
 
-	listener, err := vsock.Listen(vm.GuestVsockPort, nil)
+	listener, err := vsock.Listen(vm.GuestPort, nil)
 	if err != nil {
-		return fmt.Errorf("listen on guest vsock port %d: %w", vm.GuestVsockPort, err)
+		return fmt.Errorf("listen on guest vsock port %d: %w", vm.GuestPort, err)
 	}
 	defer listener.Close()
 
@@ -78,7 +78,7 @@ func authorizedHost(conn io.ReadWriteCloser) bool {
 		return false
 	}
 	addr, ok := c.RemoteAddr().(*vsock.Addr)
-	return ok && addr.CID == 2
+	return ok && addr.ContextID == vm.HostCID
 }
 
 func sendError(conn io.Writer, err error) {

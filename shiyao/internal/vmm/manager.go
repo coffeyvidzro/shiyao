@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/coffeyvidzro/shiyao/internal/network"
@@ -95,17 +94,4 @@ func (m *Manager) ListVMs() []string {
 func uniqueTapNameWithInstanceID(instanceID string) string {
 	sum := sha256.Sum256([]byte(instanceID))
 	return fmt.Sprintf("shy%02x%02x%02x%02x", sum[0], sum[1], sum[2], sum[3])
-}
-
-func validateVMID(vmID string) error {
-	if vmID == "" {
-		return fmt.Errorf("vm ID is required")
-	}
-	if len(vmID) > 64 {
-		return fmt.Errorf("vm ID is too long")
-	}
-	if strings.ContainsAny(vmID, `/\\:*?"<>|`) {
-		return fmt.Errorf("vm ID %q contains invalid characters", vmID)
-	}
-	return nil
 }

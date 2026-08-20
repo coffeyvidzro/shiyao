@@ -25,8 +25,8 @@ func SafeTransport() *http.Transport {
 			return nil, fmt.Errorf("resolve upstream %q: %w", host, err)
 		}
 		for _, ip := range ips {
-			addr, ok := netip.ParseAddr(ip.String())
-			if !ok || !isAllowedPublicIP(addr) {
+			addr, err := netip.ParseAddr(ip.String())
+			if err != nil || !isAllowedPublicIP(addr) {
 				continue
 			}
 			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))

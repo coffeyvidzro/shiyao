@@ -16,8 +16,8 @@ func AuthorizeGuestConnection(conn net.Conn, expectedCID uint32) error {
 	if !ok {
 		return fmt.Errorf("connection is not a VSOCK connection")
 	}
-	if addr.CID != expectedCID {
-		return fmt.Errorf("unauthorized VSOCK peer CID %d", addr.CID)
+	if addr.ContextID != expectedCID {
+		return fmt.Errorf("unauthorized VSOCK peer CID %d", addr.ContextID)
 	}
 	return nil
 }

@@ -31,8 +31,8 @@ func ValidateProxyTarget(host string, port int) error {
 		return fmt.Errorf("localhost target is blocked")
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		addr, ok := netip.ParseAddr(ip.String())
-		if !ok || !isAllowedPublicIP(addr) {
+		addr, err := netip.ParseAddr(ip.String())
+		if err != nil || !isAllowedPublicIP(addr) {
 			return fmt.Errorf("private or non-global target %s is blocked", host)
 		}
 	}
