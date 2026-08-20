@@ -2,7 +2,6 @@ package vmm
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -157,9 +156,4 @@ func (m *Manager) ListVMs() []string {
 		ids = append(ids, id)
 	}
 	return ids
-}
-
-func uniqueTapNameWithInstanceID(instanceID string) string {
-	sum := sha256.Sum256([]byte(instanceID))
-	return fmt.Sprintf("shy%02x%02x%02x%02x", sum[0], sum[1], sum[2], sum[3])
 }

@@ -95,26 +95,21 @@ add rule inet shiyao forward oifname @guest_taps ct state established,related ac
 }
 
 func nftAddVM(cfg Config) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "add element inet %s guest_taps { %s }\n", nftTable, cfg.TapName)
-	fmt.Fprintf(&b, "add element inet %s guest_udp_allow { %s . %s . 53 }\n", nftTable, cfg.TapName, cfg.HostIP)
-	fmt.Fprintf(&b, "add element inet %s guest_tcp_allow { %s . %s . %d }\n", nftTable, cfg.TapName, cfg.HostIP, HostProxyPort)
-	for _, port := range cfg.AllowedPorts {
-		if port != HostProxyPort {
-			fmt.Fprintf(&b, "add element inet %s guest_tcp_allow { %s . %s . %s }\n", nftTable, cfg.TapName, cfg.HostIP, strconv.Itoa(port))
-		}
-	}
-	return b.String()
+	return nftVMElements("add", cfg)
 }
 
 func nftDeleteVM(cfg Config) string {
+	return nftVMElements("delete", cfg)
+}
+
+func nftVMElements(action string, cfg Config) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "delete element inet %s guest_taps { %s }\n", nftTable, cfg.TapName)
-	fmt.Fprintf(&b, "delete element inet %s guest_udp_allow { %s . %s . 53 }\n", nftTable, cfg.TapName, cfg.HostIP)
-	fmt.Fprintf(&b, "delete element inet %s guest_tcp_allow { %s . %s . %d }\n", nftTable, cfg.TapName, cfg.HostIP, HostProxyPort)
+	fmt.Fprintf(&b, "%s element inet %s guest_taps { %s }\n", action, nftTable, cfg.TapName)
+	fmt.Fprintf(&b, "%s element inet %s guest_udp_allow { %s . %s . 53 }\n", action, nftTable, cfg.TapName, cfg.HostIP)
+	fmt.Fprintf(&b, "%s element inet %s guest_tcp_allow { %s . %s . %d }\n", action, nftTable, cfg.TapName, cfg.HostIP, HostProxyPort)
 	for _, port := range cfg.AllowedPorts {
 		if port != HostProxyPort {
-			fmt.Fprintf(&b, "delete element inet %s guest_tcp_allow { %s . %s . %s }\n", nftTable, cfg.TapName, cfg.HostIP, strconv.Itoa(port))
+			fmt.Fprintf(&b, "%s element inet %s guest_tcp_allow { %s . %s . %s }\n", action, nftTable, cfg.TapName, cfg.HostIP, strconv.Itoa(port))
 		}
 	}
 	return b.String()

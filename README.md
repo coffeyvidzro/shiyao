@@ -187,4 +187,4 @@ Firecracker, and cgroup configuration before accepting untrusted workloads.
 
 ## License
 
-Shiyao is licensed under the [Apache License 2.0](LICENSE).
+Shiyao is licensed under the [MIT License](LICENSE).
