@@ -1,9 +1,22 @@
 # Shiyao
 
+**Secure, sub-second microVM execution environment for AI agents.**
+
 Shiyao is a Go control plane for running AI-agent workloads inside isolated
 [Firecracker](https://firecracker-microvm.github.io/) microVMs. It is designed
 for Linux hosts that can provide KVM, VSOCK, TAP devices, nftables, and cgroup
 v2 controls.
+
+## The name
+
+**Shiyao (石爻)** combines two ideas that describe the project boundary:
+
+- **石 (Shí)** — stone or bedrock; the durable isolation boundary around an
+  untrusted workload.
+- **爻 (Yáo)** — the binary lines of the *I Ching*; the computational work
+  performed inside that boundary.
+
+The goal is a strong, reviewable execution boundary for AI-generated code.
 
 ## What it provides
 
@@ -123,9 +136,55 @@ sudo -E "$(command -v go)" test -tags=integration ./cmd/guest-agent -v -count=1
 Tests skip cgroup or OverlayFS assertions when the executing environment does
 not delegate the necessary kernel capabilities.
 
+## Configuration (`shiyao.yaml`)
+
+`shiyao.yaml` is the declarative description of a reusable snapshot image. It
+defines the base runtime, language dependencies, resource envelope,
+environment, and outbound-network intent used when preparing a VM image.
+
+```yaml
+version: "v1alpha1"
+name: python-agent
+description: Python environment for an AI coding agent
+
+runtime:
+  os: linux
+  distro: ubuntu-22.04
+  architecture: x86_64
+
+language:
+  name: python
+  version: "3.11"
+
+dependencies:
+  system: [curl, git]
+  pip: [requests]
+
+resources:
+  vcpu: 2
+  memory_mb: 512
+  disk_mb: 1024
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+network:
+  allowed_domains: [api.openai.com]
+  block_private_ips: true
+```
+
+Required resource values are `vcpu`, `memory_mb`, and `disk_mb`; values must
+be positive, with at least 128 MiB of memory and a 1 GiB disk. Pin dependency
+versions where reproducibility matters. The runtime currently targets Linux
+on `x86_64`.
+
 ## Status
 
 Shiyao is under active development. The networking, VSOCK, admission-control,
 and warm-pool components are implementation foundations; production deployments
 should run privileged integration tests against their target kernel, nftables,
 Firecracker, and cgroup configuration before accepting untrusted workloads.
+
+## License
+
+Shiyao is licensed under the [Apache License 2.0](LICENSE).
