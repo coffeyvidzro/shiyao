@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mdlayher/vsock"
@@ -21,6 +22,7 @@ var commandSlots = make(chan struct{}, vm.MaxConcurrentCommands)
 func main() { if err := run(); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) } }
 
 func run() error {
+	if err := setupEphemeralRootfs(); err != nil { return err }
 	listener, err := vsock.Listen(vm.GuestVsockPort, nil)
 	if err != nil { return fmt.Errorf("listen on guest vsock port %d: %w", vm.GuestVsockPort, err) }
 	defer listener.Close()
@@ -33,6 +35,7 @@ func run() error {
 
 func serve(conn io.ReadWriteCloser) {
 	defer conn.Close()
+	if !authorizedHost(conn) { sendError(conn, errors.New("unauthorized vsock peer")); return }
 	limitedConn := io.LimitReader(conn, vm.MaxRequestBytes)
 	decoder := json.NewDecoder(bufio.NewReader(limitedConn))
 	decoder.DisallowUnknownFields()
@@ -44,11 +47,17 @@ func serve(conn io.ReadWriteCloser) {
 	_, _ = conn.Write(payload)
 }
 
+func authorizedHost(conn io.ReadWriteCloser) bool {
+	c, ok := conn.(*vsock.Conn)
+	if !ok { return false }
+	addr, ok := c.RemoteAddr().(*vsock.Addr)
+	return ok && addr.CID == 2
+}
+
 func sendError(conn io.Writer, err error) {
 	result := vm.ExecResult{Version: vm.ProtocolVersion, ExitCode: -1, Error: err.Error()}
 	payload, encodeErr := vm.EncodeMessage(result)
-	if encodeErr != nil { return }
-	_, _ = conn.Write(payload)
+	if encodeErr == nil { _, _ = conn.Write(payload) }
 }
 
 func execute(req vm.ExecRequest) vm.ExecResult {
@@ -68,25 +77,33 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	if req.TimeoutMS > 0 { ctx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond) }
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, req.Command, req.Args...)
+	cmd := exec.Command(req.Command, req.Args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	cmd.Env = loadPresetEnv()
 	for key, value := range req.Env { cmd.Env = append(cmd.Env, key+"="+value) }
 	stdoutBuf := &limitedBuffer{limit: vm.MaxOutputBytes}
 	stderrBuf := &limitedBuffer{limit: vm.MaxOutputBytes}
-	cmd.Stdout = stdoutBuf
-	cmd.Stderr = stderrBuf
+	cmd.Stdout, cmd.Stderr = stdoutBuf, stderrBuf
 
-	err := cmd.Run()
-	result.Stdout = stdoutBuf.String()
-	result.Stderr = stderrBuf.String()
+	if err := startWithResourceLimits(cmd); err != nil { result.Error = err.Error(); return result }
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	var err error
+	select {
+	case err = <-waitCh:
+	case <-ctx.Done():
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		err = <-waitCh
+		result.Error = ctx.Err().Error()
+	}
+
+	result.Stdout, result.Stderr = stdoutBuf.String(), stderrBuf.String()
 	if stdoutBuf.truncated { result.Stdout += "\n[OUTPUT TRUNCATED DUE TO SIZE LIMIT]" }
 	if stderrBuf.truncated { result.Stderr += "\n[OUTPUT TRUNCATED DUE TO SIZE LIMIT]" }
 	if err == nil { result.ExitCode = 0; return result }
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) { result.ExitCode = exitErr.ExitCode() } else {
-		result.Error = err.Error()
-		if ctx.Err() != nil { result.Error = ctx.Err().Error() }
-	}
+	if errors.As(err, &exitErr) { result.ExitCode = exitErr.ExitCode() } else if result.Error == "" { result.Error = err.Error() }
 	return result
 }
 
