@@ -4,9 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/coreos/go-iptables/iptables"
 )
+
+// firewallMu serializes all iptables mutations to prevent race conditions
+// when multiple VMs are being created/destroyed concurrently.
+var firewallMu sync.Mutex
 
 const (
 	// Default port for host-side authenticating egress proxy (e.g., Envoy, Squid, or Tinyproxy)
@@ -21,7 +26,7 @@ const (
 // 1. Drop traffic targeting 169.254.169.254 (SSRF protection).
 // 2. Allow established/related return traffic.
 // 3. Allow DNS requests to host interface.
-// 4. Allow TCP traffic ONLY to the Host/Gateway Proxy Port.
+// 4. Allow TCP traffic ONLY to the Host/Gateway Proxy Port and configured AllowedPorts.
 // 5. Default DROP all direct internet egress attempts.
 func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 	_ = ctx
@@ -29,6 +34,9 @@ func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 	if cfg.TapName == "" {
 		return fmt.Errorf("tap name is empty")
 	}
+
+	firewallMu.Lock()
+	defer firewallMu.Unlock()
 
 	ipt, err := iptables.New()
 	if err != nil {
@@ -101,6 +109,29 @@ func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 		return fmt.Errorf("allow proxy port traffic: %w", err)
 	}
 
+	// 4b. RULE: Allow TCP traffic to configured AllowedPorts if specified
+	// This enforces the network policy defined in NetworkConfig.AllowedPorts
+	for _, port := range cfg.AllowedPorts {
+		if port < 1 || port > 65535 {
+			cleanup()
+			return fmt.Errorf("invalid allowed port %d", port)
+		}
+		// Skip the proxy port as it's already allowed above
+		if port == HostProxyPort {
+			continue
+		}
+		if err := ipt.Append(
+			"filter",
+			chain,
+			"-p", "tcp",
+			"--dport", fmt.Sprintf("%d", port),
+			"-j", "ACCEPT",
+		); err != nil {
+			cleanup()
+			return fmt.Errorf("allow configured port %d traffic: %w", port, err)
+		}
+	}
+
 	// 5. RULE: Default DROP for all other egress attempts
 	if err := ipt.Append("filter", chain, "-j", "DROP"); err != nil {
 		cleanup()
@@ -133,6 +164,9 @@ func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 // CleanupFirewall removes the VM-specific filtering chain and forward attachments.
 func CleanupFirewall(ctx context.Context, cfg NetworkConfig) error {
 	_ = ctx
+
+	firewallMu.Lock()
+	defer firewallMu.Unlock()
 
 	ipt, err := iptables.New()
 	if err != nil {

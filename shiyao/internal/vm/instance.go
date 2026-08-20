@@ -3,8 +3,10 @@ package vm
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -21,6 +23,14 @@ type SnapshotConfig struct {
 	EnableResume  bool
 }
 
+// SnapshotIntegrity holds validation metadata for snapshot files.
+type SnapshotIntegrity struct {
+	ExpectedMemHash   string
+	ExpectedStateHash string
+	KernelHash        string
+	RootfsHash        string
+}
+
 type Instance struct {
 	mu         sync.Mutex
 	ID         string
@@ -30,6 +40,7 @@ type Instance struct {
 	netCfg     NetworkConfig
 	vsockCfg   VsockConfig
 	snapCfg    SnapshotConfig
+	snapInteg  SnapshotIntegrity // Snapshot integrity validation metadata
 	machine    *fc.Machine
 	cleanups   []func() error
 	state      State
@@ -60,11 +71,70 @@ func generateMAC(vmID string) string {
 	return mac.String()
 }
 
+// validateSnapshotIntegrity checks snapshot file hashes if expected values are provided.
+// This prevents loading tampered or corrupted snapshot files.
+func (i *Instance) validateSnapshotIntegrity() error {
+	// If no hashes are provided, skip validation (allow unverified snapshots)
+	if i.snapInteg.ExpectedMemHash == "" && i.snapInteg.ExpectedStateHash == "" {
+		return nil
+	}
+
+	// Validate memory file hash
+	if i.snapInteg.ExpectedMemHash != "" {
+		memHash, err := computeFileHash(i.snapCfg.MemFilePath)
+		if err != nil {
+			return fmt.Errorf("compute memory file hash: %w", err)
+		}
+		if memHash != i.snapInteg.ExpectedMemHash {
+			return fmt.Errorf("memory file hash mismatch: expected %s, got %s", i.snapInteg.ExpectedMemHash, memHash)
+		}
+	}
+
+	// Validate state file hash
+	if i.snapInteg.ExpectedStateHash != "" {
+		stateHash, err := computeFileHash(i.snapCfg.StateFilePath)
+		if err != nil {
+			return fmt.Errorf("compute state file hash: %w", err)
+		}
+		if stateHash != i.snapInteg.ExpectedStateHash {
+			return fmt.Errorf("state file hash mismatch: expected %s, got %s", i.snapInteg.ExpectedStateHash, stateHash)
+		}
+	}
+
+	return nil
+}
+
+// computeFileHash computes SHA256 hash of a file.
+func computeFileHash(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 func guestKernelArgs(bootArgs, guestAgentPath string) string {
 	bootArgs = strings.TrimSpace(bootArgs)
-	if strings.Contains(bootArgs, "init=") || guestAgentPath == "" {
+	if guestAgentPath == "" {
 		return bootArgs
 	}
+
+	// Properly parse kernel arguments to detect existing init= parameter
+	args := strings.Fields(bootArgs)
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "init=") {
+			// Don't allow overriding init= - this is a security boundary
+			return bootArgs
+		}
+	}
+
 	return strings.TrimSpace(bootArgs + " init=" + guestAgentPath)
 }
 
@@ -164,6 +234,12 @@ func (i *Instance) Configure(ctx context.Context) error {
 		if i.snapCfg.MemFilePath == "" || i.snapCfg.StateFilePath == "" {
 			i.state = StateCreated
 			return fmt.Errorf("snapshot restore enabled but snapshot paths are missing")
+		}
+
+		// Validate snapshot file integrity if hashes are provided
+		if err := i.validateSnapshotIntegrity(); err != nil {
+			i.state = StateCreated
+			return fmt.Errorf("validate snapshot integrity: %w", err)
 		}
 
 		// Inject Snapshot Opt into Firecracker SDK
