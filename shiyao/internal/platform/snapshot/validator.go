@@ -27,10 +27,6 @@ func (c *Config) Validate() error {
 	if c.Resources.DiskMB < 1024 {
 		return fmt.Errorf("resources.disk_mb must be at least 1024")
 	}
-
-	for _, port := range []int{80, 443} {
-		_ = port
-	}
 	for _, domain := range c.Network.AllowedDomains {
 		if domain == "" {
 			return fmt.Errorf("network.allowed_domains cannot contain empty domains")
