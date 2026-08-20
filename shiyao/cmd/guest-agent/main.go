@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mdlayher/vsock"
 	"github.com/coffeyvidzro/shiyao/internal/vm"
+	"github.com/mdlayher/vsock"
 )
 
 var commandSlots = make(chan struct{}, vm.MaxConcurrentCommands)

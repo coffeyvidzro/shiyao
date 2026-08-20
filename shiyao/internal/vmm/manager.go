@@ -14,13 +14,13 @@ import (
 )
 
 type Manager struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	instances map[string]*Instance
-	baseCfg  Config
-	netCfg   network.Config
-	vsockCfg vsock.Config
-	snapCfg  SnapshotConfig
-	ipam     *network.IPAMPool
+	baseCfg   Config
+	netCfg    network.Config
+	vsockCfg  vsock.Config
+	snapCfg   SnapshotConfig
+	ipam      *network.IPAMPool
 }
 
 func NewManager(baseCfg Config, netCfg network.Config, vsockCfg vsock.Config, snapCfg SnapshotConfig) *Manager {
