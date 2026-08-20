@@ -65,11 +65,40 @@ func serve(conn io.ReadWriteCloser) {
 	}
 
 	result := execute(req)
+	if req.Stream {
+		streamResult(conn, result)
+		return
+	}
 	payload, err := guestvsock.EncodeMessage(result)
 	if err != nil {
 		return
 	}
 	_, _ = conn.Write(payload)
+}
+
+func streamResult(conn io.Writer, result guestvsock.ExecResult) {
+	for _, output := range []struct{ name, data string }{{"stdout", result.Stdout}, {"stderr", result.Stderr}} {
+		for len(output.data) > 0 {
+			n := len(output.data)
+			if n > guestvsock.MaxStreamFrameBytes {
+				n = guestvsock.MaxStreamFrameBytes
+			}
+			frame := guestvsock.ExecFrame{Version: guestvsock.ProtocolVersion, ID: result.ID, Stream: output.name, Data: output.data[:n]}
+			payload, err := guestvsock.EncodeMessage(frame)
+			if err != nil {
+				return
+			}
+			if _, err := conn.Write(payload); err != nil {
+				return
+			}
+			output.data = output.data[n:]
+		}
+	}
+	result.Stdout, result.Stderr = "", ""
+	payload, err := guestvsock.EncodeMessage(guestvsock.ExecFrame{Version: guestvsock.ProtocolVersion, ID: result.ID, Result: &result})
+	if err == nil {
+		_, _ = conn.Write(payload)
+	}
 }
 
 func authorizedHost(conn io.ReadWriteCloser) bool {

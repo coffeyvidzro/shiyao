@@ -47,3 +47,18 @@ func TestEncodeMessage(t *testing.T) {
 		t.Errorf("decoded message mismatch: got %+v, want %+v", decoded, req)
 	}
 }
+
+func TestExecFrameEncoding(t *testing.T) {
+	frame := ExecFrame{Version: ProtocolVersion, ID: "stream-1", Stream: "stdout", Data: "hello"}
+	encoded, err := EncodeMessage(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ExecFrame
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Stream != "stdout" || decoded.Data != "hello" || decoded.ID != frame.ID {
+		t.Fatalf("decoded frame = %+v", decoded)
+	}
+}

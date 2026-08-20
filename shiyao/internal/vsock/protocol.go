@@ -19,6 +19,7 @@ const (
 	MaxCommandLen                = 4096
 	MaxTimeoutMS          int64  = 5 * 60 * 1000
 	MaxConcurrentCommands        = 4
+	MaxStreamFrameBytes          = 64 << 10
 	HostCID               uint32 = 2
 )
 
@@ -33,6 +34,7 @@ type ExecRequest struct {
 	Args      []string          `json:"args,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	TimeoutMS int64             `json:"timeout_ms,omitempty"`
+	Stream    bool              `json:"stream,omitempty"`
 }
 
 type ExecResult struct {
@@ -42,6 +44,16 @@ type ExecResult struct {
 	Stdout   string `json:"stdout,omitempty"`
 	Stderr   string `json:"stderr,omitempty"`
 	Error    string `json:"error,omitempty"`
+}
+
+// ExecFrame is a newline-delimited response frame. Output frames are bounded
+// so a guest cannot make the host allocate an unbounded response buffer.
+type ExecFrame struct {
+	Version int         `json:"version"`
+	ID      string      `json:"id"`
+	Stream  string      `json:"stream,omitempty"`
+	Data    string      `json:"data,omitempty"`
+	Result  *ExecResult `json:"result,omitempty"`
 }
 
 func (r ExecRequest) Validate() error {
