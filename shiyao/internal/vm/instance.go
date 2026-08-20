@@ -32,6 +32,14 @@ func generateMAC(vmID string) string {
 	return mac.String()
 }
 
+func guestKernelArgs(bootArgs, guestAgentPath string) string {
+	bootArgs = strings.TrimSpace(bootArgs)
+	if strings.Contains(bootArgs, "init=") || guestAgentPath == "" {
+		return bootArgs
+	}
+	return strings.TrimSpace(bootArgs + " init=" + guestAgentPath)
+}
+
 func (i *Instance) Configure(ctx context.Context) error {
 	if err := i.cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
@@ -56,15 +64,10 @@ func (i *Instance) Configure(ctx context.Context) error {
 		return fmt.Errorf("parse host/gateway IP %q: invalid IP", i.netCfg.HostIP)
 	}
 
-	kernelArgs := i.cfg.BootArgs
-	if !strings.Contains(kernelArgs, "init=") {
-		kernelArgs = strings.TrimSpace(kernelArgs + " init=" + i.cfg.GuestAgentPath)
-	}
-
 	fcConfig := fc.Config{
 		SocketPath:      i.SocketPath,
 		KernelImagePath: i.cfg.KernelPath,
-		KernelArgs:      kernelArgs,
+		KernelArgs:      guestKernelArgs(i.cfg.BootArgs, i.cfg.GuestAgentPath),
 		Drives: []models.Drive{{
 			DriveID:      fc.String("rootfs"),
 			PathOnHost:   fc.String(i.cfg.RootfsPath),
