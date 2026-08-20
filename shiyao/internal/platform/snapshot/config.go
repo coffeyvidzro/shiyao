@@ -46,8 +46,8 @@ type Resources struct {
 }
 
 type NetworkPolicy struct {
-	AllowedDomains   []string `yaml:"allowed_domains"`
-	BlockPrivateIPs  bool     `yaml:"block_private_ips"`
+	AllowedDomains  []string `yaml:"allowed_domains"`
+	BlockPrivateIPs bool     `yaml:"block_private_ips"`
 }
 
 // Load reads and validates a shiyao.yaml file.
