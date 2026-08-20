@@ -3,7 +3,6 @@ package vmm
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -81,5 +80,3 @@ func validateVMID(vmID string) error {
 	if strings.ContainsAny(vmID, `/\\:*?"<>|`) { return fmt.Errorf("vm ID %q contains invalid characters", vmID) }
 	return nil
 }
-
-var _ = hex.EncodeToString
