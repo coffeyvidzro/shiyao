@@ -1,10 +1,17 @@
 package network
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestFirewallChainName(t *testing.T) {
-	if got, want := firewallChainName("shy0"), "SHIYAO_shy0"; got != want {
-		t.Fatalf("expected chain name %q, got %q", want, got)
+func TestNftablesPolicyUsesSharedSets(t *testing.T) {
+	cfg := Config{TapName: "shy0", HostIP: "172.16.0.1", GuestIP: "172.16.0.2/24", AllowedPorts: []int{80, 443}, UplinkInterface: "eth0"}
+	rules := nftAddVM(cfg)
+	for _, want := range []string{"guest_taps", "guest_tcp_allow", "guest_udp_allow", "shy0 . 172.16.0.1 . 443"} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("nft policy missing %q: %s", want, rules)
+		}
 	}
 }
 
