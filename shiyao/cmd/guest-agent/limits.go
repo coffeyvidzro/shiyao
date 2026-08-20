@@ -28,12 +28,13 @@ func startWithResourceLimits(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil { return fmt.Errorf("start command: %w", err) }
 
 	pid := cmd.Process.Pid
+	killAndReap := func() { _ = unix.Kill(-pid, unix.SIGKILL); _ = cmd.Wait() }
 	if err := applyRlimits(pid); err != nil {
-		_ = unix.Kill(-pid, unix.SIGKILL)
+		killAndReap()
 		return fmt.Errorf("apply process limits: %w", err)
 	}
 	if err := addToCgroup(pid); err != nil {
-		_ = unix.Kill(-pid, unix.SIGKILL)
+		killAndReap()
 		return fmt.Errorf("apply cgroup limits: %w", err)
 	}
 	return nil
