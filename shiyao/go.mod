@@ -1,6 +1,6 @@
 module github.com/coffeyvidzro/shiyao
 
-go 1.19
+go 1.26.6
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.43.6
@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.36
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.2
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/coreos/go-iptables v0.7.0
+	github.com/coreos/go-iptables v0.8.0
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
@@ -63,7 +63,7 @@ require (
 	github.com/cloudwego/base64x v0.1.7 // indirect
 	github.com/containerd/fifo v1.1.0 // indirect
 	github.com/containernetworking/cni v1.3.0 // indirect
-	github.com/containernetworking/plugins v1.5.1 // indirect
+	github.com/containernetworking/plugins v1.9.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/gin-contrib/sse v1.1.1 // indirect
 	github.com/go-openapi/analysis v0.26.0 // indirect
