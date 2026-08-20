@@ -6,9 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -28,20 +28,14 @@ func TestCommandStartsInsideDedicatedCgroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("startWithResourceLimits: %v", err)
 	}
-	defer cleanup()
+	defer func() { _ = cleanup() }()
 
-	data, err := os.ReadFile(filepath.Join("/proc", string(rune(0)), "cgroup"))
-	_ = data
-	if err == nil {
-		t.Fatal("unexpectedly read cgroup information for pid 0")
-	}
-
-	cgroupData, err := os.ReadFile(filepath.Join("/proc", "self", "cgroup"))
+	cgroupData, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(cmd.Process.Pid), "cgroup"))
 	if err != nil {
-		t.Fatalf("read current cgroup: %v", err)
+		t.Fatalf("read child cgroup: %v", err)
 	}
-	if !strings.Contains(string(cgroupData), ":/") {
-		t.Fatalf("unexpected current cgroup data: %q", cgroupData)
+	if !strings.Contains(string(cgroupData), "/shiyao/exec-") {
+		t.Fatalf("child is not in a dedicated shiyao cgroup: %q", cgroupData)
 	}
 
 	if err := cmd.Process.Kill(); err != nil {
@@ -75,25 +69,29 @@ func TestEphemeralOverlayDiscardsWrites(t *testing.T) {
 		"lowerdir="+lower+",upperdir="+upper+",workdir="+work"); err != nil {
 		t.Skipf("overlayfs unavailable: %v", err)
 	}
-	defer unix.Unmount(merged, unix.MNT_DETACH)
 
 	writePath := filepath.Join(merged, "created.txt")
 	if err := os.WriteFile(writePath, []byte("ephemeral"), 0600); err != nil {
+		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatalf("write through overlay: %v", err)
 	}
 	updated := filepath.Join(merged, "immutable.txt")
 	if err := os.WriteFile(updated, []byte("changed"), 0600); err != nil {
+		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatalf("modify through overlay: %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(lower, "created.txt")); !os.IsNotExist(err) {
+		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatalf("created file leaked into lower layer: %v", err)
 	}
 	contents, err := os.ReadFile(original)
 	if err != nil {
+		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatal(err)
 	}
 	if string(contents) != "base" {
+		_ = unix.Unmount(merged, unix.MNT_DETACH)
 		t.Fatalf("lower layer changed to %q", contents)
 	}
 
@@ -103,6 +101,4 @@ func TestEphemeralOverlayDiscardsWrites(t *testing.T) {
 	if _, err := os.Stat(writePath); !os.IsNotExist(err) {
 		t.Fatalf("ephemeral file remained after unmount: %v", err)
 	}
-
-	_ = time.Second
 }
