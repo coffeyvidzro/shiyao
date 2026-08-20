@@ -2,10 +2,12 @@ package vmm
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
-	"path/filepath"
 	"sync"
 
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
@@ -42,7 +44,7 @@ func (i *Instance) Configure(ctx context.Context) error {
 	var err error
 	i.InstanceID, err = generateInstanceID()
 	if err != nil { i.state = StateCreated; return fmt.Errorf("generate instance ID: %w", err) }
-	if i.cfg.Validate() != nil { i.state = StateCreated; return fmt.Errorf("invalid config: %w", i.cfg.Validate()) }
+	if err := i.cfg.Validate(); err != nil { i.state = StateCreated; return fmt.Errorf("invalid config: %w", err) }
 	if err := i.netCfg.Validate(); err != nil { i.state = StateCreated; return fmt.Errorf("invalid network config: %w", err) }
 	configured := false
 	defer func() {
@@ -55,9 +57,10 @@ func (i *Instance) Configure(ctx context.Context) error {
 	i.cleanups = append(i.cleanups, func() error { return network.CleanupTAP(ctx, i.netCfg.TapName) })
 	if err := network.SetupFirewall(ctx, i.netCfg); err != nil { i.state = StateCreated; return fmt.Errorf("setup firewall: %w", err) }
 	i.cleanups = append(i.cleanups, func() error { return network.CleanupFirewall(ctx, i.netCfg) })
-	guestIP, guestNetwork, err := parseGuestNetwork(i.netCfg.GuestIP)
-	if err != nil { i.state = StateCreated; return err }
-	gatewayIP := netIP(i.netCfg.HostIP)
+	guestIP, guestNetwork, err := net.ParseCIDR(i.netCfg.GuestIP)
+	if err != nil { i.state = StateCreated; return fmt.Errorf("parse guest IP %q: %w", i.netCfg.GuestIP, err) }
+	guestNetwork.IP = guestIP
+	gatewayIP := net.ParseIP(i.netCfg.HostIP)
 	if gatewayIP == nil { i.state = StateCreated; return fmt.Errorf("parse host/gateway IP %q: invalid IP", i.netCfg.HostIP) }
 	fcConfig := fc.Config{
 		SocketPath: i.SocketPath,
@@ -82,7 +85,6 @@ func (i *Instance) Configure(ctx context.Context) error {
 	i.machine = machine
 	configured = true
 	i.state = StateConfigured
-	_ = guestIP
 	return nil
 }
 
@@ -118,20 +120,8 @@ func (i *Instance) Stop(ctx context.Context) error {
 	return nil
 }
 
-func generateInstanceID() (string, error) { return randomHex(16) }
-
-func randomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := os.ReadFile("/dev/urandom"); err != nil { return "", err }
-	// Use crypto/rand in the final helper; this placeholder keeps generation local.
-	return filepath.Base(fmt.Sprintf("%x", b)), nil
+func generateInstanceID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil { return "", err }
+	return hex.EncodeToString(b), nil
 }
-
-func parseGuestNetwork(value string) (net.IP, *net.IPNet, error) {
-	ip, network, err := net.ParseCIDR(value)
-	if err != nil { return nil, nil, fmt.Errorf("parse guest IP %q: %w", value, err) }
-	network.IP = ip
-	return ip, network, nil
-}
-
-func netIP(value string) net.IP { return net.ParseIP(value) }
