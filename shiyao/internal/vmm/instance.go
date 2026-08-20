@@ -35,7 +35,7 @@ func NewInstance(id, socketPath string, cfg Config, allocation *network.Allocati
 	return &Instance{ID: id, SocketPath: socketPath, cfg: cfg, network: allocation, vsockCfg: vsockCfg, snapCfg: snapCfg, state: StateCreated}
 }
 
-func (i *Instance) Configure(ctx context.Context) error {
+func (i *Instance) Configure(ctx context.Context) (retErr error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.state != StateCreated {
@@ -63,19 +63,24 @@ func (i *Instance) Configure(ctx context.Context) error {
 	}
 	configured := false
 	defer func() {
-		if !configured {
-			_ = i.network.Release(context.Background())
+		if configured {
+			return
 		}
+		cleanupErr := i.network.Release(context.Background())
+		if cleanupErr != nil {
+			i.state = StateCleanupFailed
+			retErr = errors.Join(retErr, fmt.Errorf("cleanup network resources after configure failure: %w", cleanupErr))
+			return
+		}
+		i.state = StateCreated
 	}()
 	guestIP, guestNetwork, err := net.ParseCIDR(netCfg.GuestIP)
 	if err != nil {
-		i.state = StateCreated
 		return fmt.Errorf("parse guest IP %q: %w", netCfg.GuestIP, err)
 	}
 	guestNetwork.IP = guestIP
 	gatewayIP := net.ParseIP(netCfg.HostIP)
 	if gatewayIP == nil {
-		i.state = StateCreated
 		return fmt.Errorf("parse host/gateway IP %q: invalid IP", netCfg.HostIP)
 	}
 	fcConfig := fc.Config{
@@ -88,11 +93,9 @@ func (i *Instance) Configure(ctx context.Context) error {
 	var opts []fc.Opt
 	if i.snapCfg.EnableResume {
 		if i.snapCfg.MemFilePath == "" || i.snapCfg.StateFilePath == "" {
-			i.state = StateCreated
 			return fmt.Errorf("snapshot restore enabled but snapshot paths are missing")
 		}
 		if err := i.validateSnapshotIntegrity(); err != nil {
-			i.state = StateCreated
 			return fmt.Errorf("validate snapshot integrity: %w", err)
 		}
 		opts = append(opts, fc.WithSnapshot(i.snapCfg.MemFilePath, i.snapCfg.StateFilePath))
@@ -100,14 +103,12 @@ func (i *Instance) Configure(ctx context.Context) error {
 		fcConfig.KernelImagePath = i.cfg.KernelPath
 		kernelArgs, err := guestKernelArgs(i.cfg.BootArgs, i.cfg.GuestAgentPath)
 		if err != nil {
-			i.state = StateCreated
 			return err
 		}
 		fcConfig.KernelArgs = kernelArgs
 	}
 	machine, err := fc.NewMachine(ctx, fcConfig, opts...)
 	if err != nil {
-		i.state = StateCreated
 		return fmt.Errorf("create firecracker machine: %w", err)
 	}
 	i.machine = machine
