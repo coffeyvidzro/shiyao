@@ -12,18 +12,39 @@ import (
 	models "github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 )
 
+// SnapshotConfig specifies paths required for resuming a pre-warmed microVM.
+type SnapshotConfig struct {
+	MemFilePath   string
+	StateFilePath string
+	EnableResume  bool
+}
+
 type Instance struct {
 	ID         string
 	SocketPath string
 	cfg        Config
 	netCfg     NetworkConfig
 	vsockCfg   VsockConfig
+	snapCfg    SnapshotConfig
 	machine    *fc.Machine
 	cleanups   []func() error
 }
 
-func NewInstance(id, socketPath string, cfg Config, netCfg NetworkConfig, vsockCfg VsockConfig) *Instance {
-	return &Instance{ID: id, SocketPath: socketPath, cfg: cfg, netCfg: netCfg, vsockCfg: vsockCfg}
+func NewInstance(
+	id, socketPath string,
+	cfg Config,
+	netCfg NetworkConfig,
+	vsockCfg VsockConfig,
+	snapCfg SnapshotConfig,
+) *Instance {
+	return &Instance{
+		ID:         id,
+		SocketPath: socketPath,
+		cfg:        cfg,
+		netCfg:     netCfg,
+		vsockCfg:   vsockCfg,
+		snapCfg:    snapCfg,
+	}
 }
 
 func generateMAC(vmID string) string {
@@ -44,10 +65,13 @@ func (i *Instance) Configure(ctx context.Context) error {
 	if err := i.cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
+
+	// 1. Provision host TAP network and firewall isolation
 	if err := SetupTAP(ctx, i.netCfg); err != nil {
 		return fmt.Errorf("setup tap: %w", err)
 	}
 	i.cleanups = append(i.cleanups, func() error { return CleanupTAP(ctx, i.netCfg.TapName) })
+
 	if err := SetupFirewall(ctx, i.netCfg); err != nil {
 		return fmt.Errorf("setup firewall: %w", err)
 	}
@@ -64,10 +88,9 @@ func (i *Instance) Configure(ctx context.Context) error {
 		return fmt.Errorf("parse host/gateway IP %q: invalid IP", i.netCfg.HostIP)
 	}
 
+	// 2. Build base Firecracker VM Configuration
 	fcConfig := fc.Config{
-		SocketPath:      i.SocketPath,
-		KernelImagePath: i.cfg.KernelPath,
-		KernelArgs:      guestKernelArgs(i.cfg.BootArgs, i.cfg.GuestAgentPath),
+		SocketPath: i.SocketPath,
 		Drives: []models.Drive{{
 			DriveID:      fc.String("rootfs"),
 			PathOnHost:   fc.String(i.cfg.RootfsPath),
@@ -91,7 +114,23 @@ func (i *Instance) Configure(ctx context.Context) error {
 		VsockDevices: []fc.VsockDevice{{ID: "vsock0", CID: i.vsockCfg.GuestCID}},
 	}
 
-	machine, err := fc.NewMachine(ctx, fcConfig)
+	// 3. Branching: Snapshot Resume vs. Full Boot Path
+	var opts []fc.Opt
+	if i.snapCfg.EnableResume {
+		if i.snapCfg.MemFilePath == "" || i.snapCfg.StateFilePath == "" {
+			return fmt.Errorf("snapshot restore enabled but snapshot paths are missing")
+		}
+
+		// Inject Snapshot Opt into Firecracker SDK
+		opts = append(opts, fc.WithSnapshot(i.snapCfg.MemFilePath, i.snapCfg.StateFilePath))
+	} else {
+		// Kernel path and boot parameters are only needed for standard cold boot
+		fcConfig.KernelImagePath = i.cfg.KernelPath
+		fcConfig.KernelArgs = guestKernelArgs(i.cfg.BootArgs, i.cfg.GuestAgentPath)
+	}
+
+	// 4. Instantiate Machine
+	machine, err := fc.NewMachine(ctx, fcConfig, opts...)
 	if err != nil {
 		return fmt.Errorf("create firecracker machine: %w", err)
 	}
@@ -103,6 +142,15 @@ func (i *Instance) Start(ctx context.Context) error {
 	if i.machine == nil {
 		return fmt.Errorf("machine not configured")
 	}
+
+	// Resume from snapshot or execute standard start
+	if i.snapCfg.EnableResume {
+		if err := i.machine.ResumeVM(ctx); err != nil {
+			return fmt.Errorf("resume microvm snapshot: %w", err)
+		}
+		return nil
+	}
+
 	if err := i.machine.Start(ctx); err != nil {
 		return fmt.Errorf("start guest os: %w", err)
 	}

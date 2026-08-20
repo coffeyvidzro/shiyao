@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/mdlayher/vsock"
@@ -58,8 +60,8 @@ func serve(conn io.ReadWriteCloser) {
 
 func execute(req vm.ExecRequest) vm.ExecResult {
 	result := vm.ExecResult{
-		Version: vm.ProtocolVersion,
-		ID:      req.ID,
+		Version:  vm.ProtocolVersion,
+		ID:       req.ID,
 		ExitCode: -1,
 	}
 
@@ -76,13 +78,22 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, req.Command, req.Args...)
-	cmd.Env = os.Environ()
+
+	// Load base environment + /etc/shiyao-env
+	cmd.Env = loadPresetEnv()
 	for key, value := range req.Env {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 
-	stdout, err := cmd.Output()
-	result.Stdout = string(stdout)
+	// Capture stdout and stderr independently to preserve output on non-zero exit
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	result.Stdout = stdoutBuf.String()
+	result.Stderr = stderrBuf.String()
+
 	if err == nil {
 		result.ExitCode = 0
 		return result
@@ -91,7 +102,6 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
-		result.Stderr = string(exitErr.Stderr)
 	} else {
 		result.Error = err.Error()
 		if ctx.Err() != nil {
@@ -100,4 +110,20 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	}
 
 	return result
+}
+
+func loadPresetEnv() []string {
+	env := os.Environ()
+	data, err := os.ReadFile("/etc/shiyao-env")
+	if err != nil {
+		return env
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			env = append(env, line)
+		}
+	}
+	return env
 }

@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	GuestVsockPort uint32 = 1024
-	ProtocolVersion       = 1
+	GuestVsockPort  uint32 = 1024
+	ProtocolVersion        = 1
 )
 
 // ExecRequest is the command sent from the host to the guest agent.

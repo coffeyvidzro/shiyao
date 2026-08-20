@@ -34,7 +34,7 @@ func NewBuilder(registry *Registry, kernel, guestAgent string) (*Builder, error)
 	return &Builder{Registry: registry, Kernel: kernel, GuestAgent: guestAgent}, nil
 }
 
-func (b *Builder) Build(cfg Config, rootfs string) (Manifest, error) {
+func (b *Builder) Build(ctx context.Context, cfg Config, rootfs string) (Manifest, error) {
 	if err := cfg.Validate(); err != nil {
 		return Manifest{}, err
 	}
@@ -50,6 +50,7 @@ func (b *Builder) Build(cfg Config, rootfs string) (Manifest, error) {
 	if _, err := exec.LookPath("debootstrap"); err != nil {
 		return Manifest{}, fmt.Errorf("debootstrap is required: %w", err)
 	}
+
 	workDir := b.WorkDir
 	if workDir == "" {
 		workDir = filepath.Dir(rootfs)
@@ -57,16 +58,19 @@ func (b *Builder) Build(cfg Config, rootfs string) (Manifest, error) {
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return Manifest{}, fmt.Errorf("create build directory: %w", err)
 	}
+
 	buildDir, err := os.MkdirTemp(workDir, ".shiyao-build-")
 	if err != nil {
 		return Manifest{}, fmt.Errorf("create build workspace: %w", err)
 	}
 	defer os.RemoveAll(buildDir)
+
 	rootDir := filepath.Join(buildDir, "rootfs")
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		return Manifest{}, fmt.Errorf("create rootfs directory: %w", err)
 	}
-	if err := b.buildRootfs(context.Background(), cfg, rootDir); err != nil {
+
+	if err := b.buildRootfs(ctx, cfg, rootDir); err != nil {
 		return Manifest{}, err
 	}
 	if err := installGuestAgent(rootDir, b.GuestAgent); err != nil {
@@ -78,8 +82,18 @@ func (b *Builder) Build(cfg Config, rootfs string) (Manifest, error) {
 	if err := createFilesystemImage(rootDir, rootfs, cfg.Resources.DiskMB); err != nil {
 		return Manifest{}, err
 	}
-	manifest := Manifest{Version: ManifestVersion, Name: cfg.Name, ConfigDigest: configDigest(cfg), KernelPath: filepath.Clean(b.Kernel), RootfsPath: filepath.Clean(rootfs), CreatedAt: time.Now().UTC()}
-	if err := b.Registry.Put(manifest); err != nil {
+
+	manifest := Manifest{
+		Version:      ManifestVersion,
+		Name:         cfg.Name,
+		ConfigDigest: configDigest(cfg),
+		KernelPath:   filepath.Clean(b.Kernel),
+		RootfsPath:   filepath.Clean(rootfs),
+		GuestAgent:   filepath.Clean(b.GuestAgent),
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	if err := b.Registry.Put(ctx, manifest); err != nil {
 		return Manifest{}, fmt.Errorf("register snapshot: %w", err)
 	}
 	return manifest, nil
@@ -96,7 +110,8 @@ func (b *Builder) buildRootfs(ctx context.Context, cfg Config, rootDir string) e
 	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
 		_ = os.WriteFile(filepath.Join(rootDir, "etc", "resolv.conf"), data, 0o644)
 	}
-	if err := withChrootMounts(ctx, rootDir, func() error {
+
+	return withChrootMounts(ctx, rootDir, func() error {
 		if err := runChroot(ctx, rootDir, "apt-get", "update"); err != nil {
 			return fmt.Errorf("apt update: %w", err)
 		}
@@ -122,10 +137,7 @@ func (b *Builder) buildRootfs(ctx context.Context, cfg Config, rootDir string) e
 			}
 		}
 		return nil
-	}); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 func installGuestAgent(rootDir, guestAgent string) error {
@@ -138,11 +150,13 @@ func installGuestAgent(rootDir, guestAgent string) error {
 		return err
 	}
 	defer src.Close()
+
 	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
 	if err != nil {
 		return err
 	}
 	defer dstFile.Close()
+
 	if _, err := io.Copy(dstFile, src); err != nil {
 		return err
 	}
@@ -153,7 +167,11 @@ func installLanguage(ctx context.Context, rootDir string, language LanguageConfi
 	if language.Name == "" {
 		return nil
 	}
-	packages := map[string][]string{"python": {"python3", "python3-pip"}, "node": {"nodejs", "npm"}, "go": {"golang"}}
+	packages := map[string][]string{
+		"python": {"python3", "python3-pip"},
+		"node":   {"nodejs", "npm"},
+		"go":     {"golang"},
+	}
 	pkgs, ok := packages[strings.ToLower(language.Name)]
 	if !ok {
 		return fmt.Errorf("unsupported language runtime %q", language.Name)
@@ -170,17 +188,20 @@ func withChrootMounts(ctx context.Context, rootDir string, fn func() error) erro
 	if err := runCommand(ctx, "mount", "--rbind", "/dev", dev); err != nil {
 		return fmt.Errorf("mount /dev: %w", err)
 	}
-	defer runCommand(context.Background(), "umount", "-R", dev)
+	defer runCommand(context.Background(), "umount", "-R", "-l", dev)
+
 	if err := runCommand(ctx, "mount", "-t", "proc", "proc", proc); err != nil {
 		return fmt.Errorf("mount /proc: %w", err)
 	}
-	defer runCommand(context.Background(), "umount", proc)
+	defer runCommand(context.Background(), "umount", "-l", proc)
+
 	return fn()
 }
 
 func runChroot(ctx context.Context, rootDir string, args ...string) error {
 	return runCommand(ctx, "chroot", append([]string{rootDir}, args...)...)
 }
+
 func runCommand(ctx context.Context, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout = os.Stdout
@@ -190,6 +211,7 @@ func runCommand(ctx context.Context, name string, args ...string) error {
 	}
 	return nil
 }
+
 func writeEnvironment(rootDir string, env map[string]string) error {
 	if len(env) == 0 {
 		return nil
@@ -203,10 +225,13 @@ func writeEnvironment(rootDir string, env map[string]string) error {
 		if !validEnvName(key) {
 			return fmt.Errorf("invalid environment variable name %q", key)
 		}
-		lines = append(lines, fmt.Sprintf("%s=%s", key, shellQuote(value)))
+		sanitized := strings.ReplaceAll(value, "\n", "\\n")
+		sanitized = strings.ReplaceAll(sanitized, "\r", "")
+		lines = append(lines, fmt.Sprintf("%s=%s", key, shellQuote(sanitized)))
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
+
 func createFilesystemImage(rootDir, output string, diskMB int) error {
 	if _, err := exec.LookPath("mkfs.ext4"); err != nil {
 		return fmt.Errorf("mkfs.ext4 is required: %w", err)
@@ -225,10 +250,12 @@ func createFilesystemImage(rootDir, output string, diskMB int) error {
 		return fmt.Errorf("create image mount directory: %w", err)
 	}
 	defer os.RemoveAll(mountDir)
+
 	if err := runCommand(context.Background(), "mount", "-o", "loop", output, mountDir); err != nil {
 		return fmt.Errorf("mount filesystem image: %w", err)
 	}
-	defer runCommand(context.Background(), "umount", mountDir)
+	defer runCommand(context.Background(), "umount", "-l", mountDir)
+
 	cmd := exec.Command("sh", "-c", "tar --exclude=./dev -C \"$1\" -cpf - . | tar -C \"$2\" -xpf -", "sh", rootDir, mountDir)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -236,21 +263,33 @@ func createFilesystemImage(rootDir, output string, diskMB int) error {
 	}
 	return nil
 }
+
 func configDigest(cfg Config) string {
 	payload := fmt.Sprintf("%#v", cfg)
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }
+
 func distroSource(distro string) (string, string, error) {
-	switch {
-	case strings.HasPrefix(distro, "ubuntu-"):
-		return strings.TrimPrefix(distro, "ubuntu-"), "http://archive.ubuntu.com/ubuntu", nil
-	case strings.HasPrefix(distro, "debian-"):
-		return strings.TrimPrefix(distro, "debian-"), "http://deb.debian.org/debian", nil
-	default:
+	distroMap := map[string]struct {
+		codename string
+		mirror   string
+	}{
+		"ubuntu-22.04": {"jammy", "http://archive.ubuntu.com/ubuntu"},
+		"ubuntu-20.04": {"focal", "http://archive.ubuntu.com/ubuntu"},
+		"ubuntu-24.04": {"noble", "http://archive.ubuntu.com/ubuntu"},
+		"debian-11":    {"bullseye", "http://deb.debian.org/debian"},
+		"debian-12":    {"bookworm", "http://deb.debian.org/debian"},
+	}
+
+	res, ok := distroMap[strings.ToLower(distro)]
+	if !ok {
 		return "", "", fmt.Errorf("unsupported distribution %q", distro)
 	}
+
+	return res.codename, res.mirror, nil
 }
+
 func validEnvName(name string) bool {
 	if name == "" {
 		return false
@@ -262,4 +301,7 @@ func validEnvName(name string) bool {
 	}
 	return true
 }
-func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}

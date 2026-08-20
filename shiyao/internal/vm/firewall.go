@@ -3,34 +3,31 @@ package vm
 import (
 	"context"
 	"fmt"
-	"net"
 	"strings"
 
 	"github.com/coreos/go-iptables/iptables"
 )
 
-// SetupFirewall installs per-VM forwarding and NAT rules.
+const (
+	// Default port for host-side authenticating egress proxy (e.g., Envoy, Squid, or Tinyproxy)
+	HostProxyPort = 8080
+	// Cloud Metadata Service IP (AWS, GCP, Azure, OpenStack)
+	CloudMetadataIP = "169.254.169.254/32"
+)
+
+// SetupFirewall installs per-VM security rules.
 //
-// Traffic originating from the VM is passed through a dedicated chain.
-// The chain allows established/related traffic, DNS, ICMP, and explicitly
-// allowed TCP ports, then drops everything else.
-//
-// Return traffic is explicitly allowed when it is established/related and
-// is leaving through this VM's TAP interface.
+// Rules configured:
+// 1. Drop traffic targeting 169.254.169.254 (SSRF protection).
+// 2. Allow established/related return traffic.
+// 3. Allow DNS requests to host interface.
+// 4. Allow TCP traffic ONLY to the Host/Gateway Proxy Port.
+// 5. Default DROP all direct internet egress attempts.
 func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 	_ = ctx
 
 	if cfg.TapName == "" {
 		return fmt.Errorf("tap name is empty")
-	}
-
-	if cfg.UplinkInterface == "" {
-		return fmt.Errorf("uplink interface is empty")
-	}
-
-	_, guestNet, err := net.ParseCIDR(cfg.GuestIP)
-	if err != nil {
-		return fmt.Errorf("parse guest network %q: %w", cfg.GuestIP, err)
 	}
 
 	ipt, err := iptables.New()
@@ -40,20 +37,14 @@ func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 
 	chain := firewallChainName(cfg.TapName)
 
-	// Create a dedicated chain for this VM.
+	// Create dedicated filter chain for this VM
 	if err := ipt.NewChain("filter", chain); err != nil {
 		return fmt.Errorf("create chain %s: %w", chain, err)
 	}
 
-	// If anything below fails, remove everything installed so far.
+	// Rollback cleanup helper
 	cleanup := func() {
-		_ = ipt.Delete(
-			"filter",
-			"FORWARD",
-			"-i", cfg.TapName,
-			"-j", chain,
-		)
-
+		_ = ipt.Delete("filter", "FORWARD", "-i", cfg.TapName, "-j", chain)
 		_ = ipt.Delete(
 			"filter",
 			"FORWARD",
@@ -62,20 +53,17 @@ func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 			"--ctstate", "ESTABLISHED,RELATED",
 			"-j", "ACCEPT",
 		)
-
-		_ = ipt.Delete(
-			"nat",
-			"POSTROUTING",
-			"-s", guestNet.String(),
-			"-o", cfg.UplinkInterface,
-			"-j", "MASQUERADE",
-		)
-
 		_ = ipt.ClearChain("filter", chain)
 		_ = ipt.DeleteChain("filter", chain)
 	}
 
-	// Established connections originating from the guest are accepted.
+	// 1. RULE: Block Cloud Metadata Endpoint (169.254.169.254) immediately
+	if err := ipt.Append("filter", chain, "-d", CloudMetadataIP, "-j", "DROP"); err != nil {
+		cleanup()
+		return fmt.Errorf("add metadata block rule: %w", err)
+	}
+
+	// 2. RULE: Allow Established/Related traffic from guest
 	if err := ipt.Append(
 		"filter",
 		chain,
@@ -87,81 +75,45 @@ func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 		return fmt.Errorf("allow established traffic: %w", err)
 	}
 
-	// DNS.
+	// 3. RULE: Allow UDP DNS queries targeting Host IP (172.16.x.1)
 	if err := ipt.Append(
 		"filter",
 		chain,
 		"-p", "udp",
+		"-d", cfg.HostIP,
 		"--dport", "53",
 		"-j", "ACCEPT",
 	); err != nil {
 		cleanup()
-		return fmt.Errorf("allow UDP DNS: %w", err)
+		return fmt.Errorf("allow host UDP DNS: %w", err)
 	}
 
+	// 4. RULE: Allow TCP connection targeting Host Proxy Port ONLY
 	if err := ipt.Append(
 		"filter",
 		chain,
 		"-p", "tcp",
-		"--dport", "53",
+		"-d", cfg.HostIP,
+		"--dport", fmt.Sprintf("%d", HostProxyPort),
 		"-j", "ACCEPT",
 	); err != nil {
 		cleanup()
-		return fmt.Errorf("allow TCP DNS: %w", err)
+		return fmt.Errorf("allow proxy port traffic: %w", err)
 	}
 
-	// ICMP.
-	if err := ipt.Append(
-		"filter",
-		chain,
-		"-p", "icmp",
-		"-j", "ACCEPT",
-	); err != nil {
+	// 5. RULE: Default DROP for all other egress attempts
+	if err := ipt.Append("filter", chain, "-j", "DROP"); err != nil {
 		cleanup()
-		return fmt.Errorf("allow ICMP: %w", err)
+		return fmt.Errorf("add default drop rule: %w", err)
 	}
 
-	// Explicitly allowed TCP ports.
-	for _, port := range cfg.AllowedPorts {
-		if port < 1 || port > 65535 {
-			cleanup()
-			return fmt.Errorf("invalid allowed TCP port %d", port)
-		}
-
-		if err := ipt.Append(
-			"filter",
-			chain,
-			"-p", "tcp",
-			"--dport", fmt.Sprintf("%d", port),
-			"-j", "ACCEPT",
-		); err != nil {
-			cleanup()
-			return fmt.Errorf("allow TCP port %d: %w", port, err)
-		}
-	}
-
-	// Default deny for traffic originating from this VM.
-	if err := ipt.Append(
-		"filter",
-		chain,
-		"-j", "DROP",
-	); err != nil {
-		cleanup()
-		return fmt.Errorf("add default drop: %w", err)
-	}
-
-	// Send guest-originated packets through the VM-specific chain.
-	if err := ipt.Append(
-		"filter",
-		"FORWARD",
-		"-i", cfg.TapName,
-		"-j", chain,
-	); err != nil {
+	// 6. ATTACH: Send guest TAP ingress traffic to custom VM chain
+	if err := ipt.Append("filter", "FORWARD", "-i", cfg.TapName, "-j", chain); err != nil {
 		cleanup()
 		return fmt.Errorf("attach guest ingress rule: %w", err)
 	}
 
-	// Allow return traffic to this VM.
+	// 7. ATTACH: Allow return traffic from host to guest TAP interface
 	if err := ipt.Append(
 		"filter",
 		"FORWARD",
@@ -171,25 +123,14 @@ func SetupFirewall(ctx context.Context, cfg NetworkConfig) error {
 		"-j", "ACCEPT",
 	); err != nil {
 		cleanup()
-		return fmt.Errorf("allow return traffic: %w", err)
+		return fmt.Errorf("allow return traffic rule: %w", err)
 	}
 
-	// NAT only traffic belonging to this VM's guest network.
-	if err := ipt.Append(
-		"nat",
-		"POSTROUTING",
-		"-s", guestNet.String(),
-		"-o", cfg.UplinkInterface,
-		"-j", "MASQUERADE",
-	); err != nil {
-		cleanup()
-		return fmt.Errorf("add NAT rule: %w", err)
-	}
-
+	// NOTE: MASQUERADE NAT rule is intentionally omitted to disable direct guest-to-internet routing.
 	return nil
 }
 
-// CleanupFirewall removes only this VM's firewall and NAT rules.
+// CleanupFirewall removes the VM-specific filtering chain and forward attachments.
 func CleanupFirewall(ctx context.Context, cfg NetworkConfig) error {
 	_ = ctx
 
@@ -199,21 +140,11 @@ func CleanupFirewall(ctx context.Context, cfg NetworkConfig) error {
 	}
 
 	chain := firewallChainName(cfg.TapName)
-
-	_, guestNet, err := net.ParseCIDR(cfg.GuestIP)
-	if err != nil {
-		return fmt.Errorf("parse guest network %q: %w", cfg.GuestIP, err)
-	}
-
 	var errs []string
 
-	if err := ipt.Delete(
-		"filter",
-		"FORWARD",
-		"-i", cfg.TapName,
-		"-j", chain,
-	); err != nil && !isRuleNotFound(err) {
-		errs = append(errs, fmt.Sprintf("delete ingress rule: %v", err))
+	// Delete forward hook rules
+	if err := ipt.Delete("filter", "FORWARD", "-i", cfg.TapName, "-j", chain); err != nil && !isRuleNotFound(err) {
+		errs = append(errs, fmt.Sprintf("delete ingress hook: %v", err))
 	}
 
 	if err := ipt.Delete(
@@ -224,25 +155,16 @@ func CleanupFirewall(ctx context.Context, cfg NetworkConfig) error {
 		"--ctstate", "ESTABLISHED,RELATED",
 		"-j", "ACCEPT",
 	); err != nil && !isRuleNotFound(err) {
-		errs = append(errs, fmt.Sprintf("delete return rule: %v", err))
+		errs = append(errs, fmt.Sprintf("delete egress return hook: %v", err))
 	}
 
-	if err := ipt.Delete(
-		"nat",
-		"POSTROUTING",
-		"-s", guestNet.String(),
-		"-o", cfg.UplinkInterface,
-		"-j", "MASQUERADE",
-	); err != nil && !isRuleNotFound(err) {
-		errs = append(errs, fmt.Sprintf("delete NAT rule: %v", err))
-	}
-
+	// Flush and delete isolated chain
 	if err := ipt.ClearChain("filter", chain); err != nil && !isChainNotFound(err) {
-		errs = append(errs, fmt.Sprintf("clear chain: %v", err))
+		errs = append(errs, fmt.Sprintf("clear chain %s: %v", chain, err))
 	}
 
 	if err := ipt.DeleteChain("filter", chain); err != nil && !isChainNotFound(err) {
-		errs = append(errs, fmt.Sprintf("delete chain: %v", err))
+		errs = append(errs, fmt.Sprintf("delete chain %s: %v", chain, err))
 	}
 
 	if len(errs) > 0 {

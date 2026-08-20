@@ -18,96 +18,92 @@ type Manager struct {
 	baseCfg  Config
 	netCfg   NetworkConfig
 	vsockCfg VsockConfig
+	snapCfg  SnapshotConfig
 
-	// Allocation counters for per-VM resources.
-	nextSubnet uint16
-	nextCID    uint32
+	ipam *IPAMPool
 }
 
-// NewManager creates a VM manager from the supplied base configuration.
+// NewManager creates a VM manager with an active IPAM pool.
 func NewManager(
 	baseCfg Config,
 	netCfg NetworkConfig,
 	vsockCfg VsockConfig,
+	snapCfg SnapshotConfig,
 ) *Manager {
 	return &Manager{
 		instances: make(map[string]*Instance),
-
-		baseCfg:  baseCfg,
-		netCfg:   netCfg,
-		vsockCfg: vsockCfg,
-
-		// 172.16.0.0/12 contains private IPv4 space.
-		// We allocate one /24 per VM.
-		nextSubnet: 0,
-
-		// CID 0 and 1 are reserved, and the host uses CID 2.
-		nextCID: 3,
+		baseCfg:   baseCfg,
+		netCfg:    netCfg,
+		vsockCfg:  vsockCfg,
+		snapCfg:   snapCfg,
+		ipam:      NewIPAMPool(),
 	}
 }
 
-// CreateVM initializes a new VM instance in memory and allocates
-// unique VM-specific networking and VSOCK resources.
+// CreateVM initializes a new VM instance with safely allocated resources.
 func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 	if err := validateVMID(vmID); err != nil {
 		return nil, err
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if _, exists := m.instances[vmID]; exists {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("vm %s already exists", vmID)
 	}
+	m.mu.Unlock()
 
-	netCfg, err := m.allocateNetworkConfig(vmID)
+	// Atomically allocate subnet and CID from pool
+	netCfg, cid, err := m.ipam.Allocate(vmID, m.netCfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("allocate resources for vm %s: %w", vmID, err)
 	}
 
 	vsockCfg := m.vsockCfg
-	vsockCfg.GuestCID = m.allocateCID()
+	vsockCfg.GuestCID = cid
 
 	socketPath := filepath.Join(
 		os.TempDir(),
 		fmt.Sprintf("firecracker-%s.sock", vmID),
 	)
 
+	// Fixed: Passing all 6 arguments required by NewInstance
 	inst := NewInstance(
 		vmID,
 		socketPath,
 		m.baseCfg,
 		netCfg,
 		vsockCfg,
+		m.snapCfg,
 	)
 
+	m.mu.Lock()
 	m.instances[vmID] = inst
+	m.mu.Unlock()
 
 	return inst, nil
 }
 
-// DestroyVM stops and removes a VM instance.
+// DestroyVM stops a VM instance and recycles its network/vsock resources.
 func (m *Manager) DestroyVM(ctx context.Context, vmID string) error {
 	m.mu.Lock()
-
 	inst, exists := m.instances[vmID]
 	if !exists {
 		m.mu.Unlock()
 		return fmt.Errorf("vm %s not found", vmID)
 	}
 
-	// Do not hold the manager mutex while Stop() performs potentially
-	// slow VMM/network cleanup.
+	// Remove tracking to prevent concurrent actions during stop
 	delete(m.instances, vmID)
-
 	m.mu.Unlock()
 
-	if err := inst.Stop(ctx); err != nil {
-		// Put the instance back if cleanup failed so callers can retry.
-		m.mu.Lock()
-		m.instances[vmID] = inst
-		m.mu.Unlock()
+	// Perform physical stop and teardown outside manager lock
+	err := inst.Stop(ctx)
 
+	// Always release IPAM resources back to the pool regardless of cleanup warning
+	m.ipam.Release(inst.netCfg.GuestIP, inst.vsockCfg.GuestCID)
+
+	if err != nil {
 		return fmt.Errorf("stop vm %s: %w", vmID, err)
 	}
 
@@ -141,48 +137,7 @@ func (m *Manager) ListVMs() []string {
 	return ids
 }
 
-// allocateNetworkConfig allocates a unique /24 network for a VM.
-//
-// Example:
-//
-//	VM 0 -> 172.16.0.1 / 172.16.0.2
-//	VM 1 -> 172.16.1.1 / 172.16.1.2
-//	VM 2 -> 172.16.2.1 / 172.16.2.2
-func (m *Manager) allocateNetworkConfig(vmID string) (NetworkConfig, error) {
-	if m.nextSubnet >= 256 {
-		return NetworkConfig{}, fmt.Errorf("network subnet pool exhausted")
-	}
-
-	cfg := m.netCfg
-
-	thirdOctet := byte(m.nextSubnet)
-
-	cfg.HostIP = fmt.Sprintf("172.16.%d.1", thirdOctet)
-	cfg.GuestIP = fmt.Sprintf("172.16.%d.2/24", thirdOctet)
-	cfg.TapName = uniqueTapName(vmID)
-
-	if cfg.UplinkInterface == "" {
-		return NetworkConfig{}, fmt.Errorf(
-			"uplink interface is required",
-		)
-	}
-
-	m.nextSubnet++
-
-	return cfg, nil
-}
-
-// allocateCID returns a unique guest VSOCK CID.
-func (m *Manager) allocateCID() uint32 {
-	cid := m.nextCID
-	m.nextCID++
-	return cid
-}
-
 // uniqueTapName creates a short deterministic TAP name.
-//
-// Linux interface names are limited to 15 characters, so don't directly
-// use an arbitrarily long VM ID.
 func uniqueTapName(vmID string) string {
 	sum := sha256.Sum256([]byte(vmID))
 

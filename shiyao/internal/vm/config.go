@@ -7,12 +7,12 @@ import (
 
 // Config contains the core VM runtime configuration.
 type Config struct {
-	KernelPath      string
-	RootfsPath      string
-	VCPUCount       int
-	MemSizeMB       int
-	BootArgs        string
-	GuestAgentPath  string
+	KernelPath     string
+	RootfsPath     string
+	VCPUCount      int
+	MemSizeMB      int
+	BootArgs       string
+	GuestAgentPath string
 }
 
 // NetworkConfig describes the TAP interface and egress policy.
