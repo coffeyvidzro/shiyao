@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,9 @@ func TestCommandStartsInsideDedicatedCgroup(t *testing.T) {
 	cmd := exec.Command("sleep", "2")
 	cleanup, err := startWithResourceLimits(cmd)
 	if err != nil {
+		if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) || errors.Is(err, unix.EROFS) {
+			t.Skipf("cgroup v2 delegation unavailable: %v", err)
+		}
 		t.Fatalf("startWithResourceLimits: %v", err)
 	}
 	defer func() { _ = cleanup() }()
