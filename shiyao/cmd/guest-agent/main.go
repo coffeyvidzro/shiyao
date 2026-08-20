@@ -43,7 +43,7 @@ func run() error {
 func serve(conn io.ReadWriteCloser) {
 	defer conn.Close()
 
-	// Wrap connection with size limit to prevent memory exhaustion
+	// Wrap connection with size limit to prevent memory exhaustion.
 	limitedConn := io.LimitReader(conn, vm.MaxRequestBytes)
 	decoder := json.NewDecoder(bufio.NewReader(limitedConn))
 	decoder.DisallowUnknownFields()
@@ -103,7 +103,7 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 
-	// Capture stdout and stderr with bounded buffers to prevent memory exhaustion
+	// Capture stdout and stderr with bounded buffers to prevent memory exhaustion.
 	stdoutBuf := &limitedBuffer{limit: vm.MaxOutputBytes}
 	stderrBuf := &limitedBuffer{limit: vm.MaxOutputBytes}
 	cmd.Stdout = stdoutBuf
@@ -160,9 +160,9 @@ type limitedBuffer struct {
 	truncated bool
 }
 
-func (b *limitedBuffer) Write(p []byte) (n int, err error) {
+func (b *limitedBuffer) Write(p []byte) (int, error) {
 	if b.truncated {
-		// Already at limit, discard all further writes
+		// Already at the limit; transparently consume subsequent writes.
 		return len(p), nil
 	}
 
@@ -173,10 +173,12 @@ func (b *limitedBuffer) Write(p []byte) (n int, err error) {
 	}
 
 	if len(p) > remaining {
-		p = p[:remaining]
-		b.buf = append(b.buf, p...)
+		b.buf = append(b.buf, p[:remaining]...)
 		b.truncated = true
-		return len(p) + (len(p) - remaining), nil
+		// A bounded writer must report the entire input as consumed even though
+		// only the prefix was retained. This prevents os/exec from treating the
+		// intentional truncation as an io.ErrShortWrite failure.
+		return len(p), nil
 	}
 
 	b.buf = append(b.buf, p...)
