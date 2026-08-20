@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"syscall"
@@ -11,13 +12,13 @@ import (
 )
 
 const (
-	guestCgroupRoot = "/sys/fs/cgroup/shiyao"
-	guestMemoryMax  = 384 << 20
-	guestPidsMax    = 256
-	guestCPUQuotaUS = 100000
+	guestCgroupRoot  = "/sys/fs/cgroup/shiyao"
+	guestMemoryMax   = 384 << 20
+	guestPidsMax     = 256
+	guestCPUQuotaUS  = 100000
 	guestCPUPeriodUS = 100000
-	guestFileMax    = 256 << 20
-	guestNoFileMax  = 4096
+	guestFileMax     = 256 << 20
+	guestNoFileMax   = 4096
 )
 
 func startWithResourceLimits(cmd *exec.Cmd) error {
@@ -55,8 +56,8 @@ func addToCgroup(pid int) error {
 	if err := os.MkdirAll(guestCgroupRoot, 0755); err != nil { return err }
 	settings := map[string]string{
 		"memory.max": strconv.Itoa(guestMemoryMax),
-		"pids.max": strconv.Itoa(guestPidsMax),
-		"cpu.max": fmt.Sprintf("%d %d", guestCPUQuotaUS, guestCPUPeriodUS),
+		"pids.max":   strconv.Itoa(guestPidsMax),
+		"cpu.max":    fmt.Sprintf("%d %d", guestCPUQuotaUS, guestCPUPeriodUS),
 	}
 	for name, value := range settings {
 		if err := os.WriteFile(filepath.Join(guestCgroupRoot, name), []byte(value), 0644); err != nil { return err }
