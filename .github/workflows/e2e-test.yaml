@@ -1,0 +1,44 @@
+name: E2E VM Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Enable KVM Permissions
+        run: |
+          sudo chmod 666 /dev/kvm
+          sudo apt-get update && sudo apt-get install -y iptables
+
+      - name: Install Firecracker Binary
+        run: |
+          FC_VERSION="v1.7.0"
+          curl -L "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-x86_64.tgz" | tar -xz
+          sudo mv release-${FC_VERSION}-x86_64/firecracker-${FC_VERSION}-x86_64 /usr/local/bin/firecracker
+
+      - name: Download Test Fixtures (Kernel & Base Rootfs)
+        run: |
+          # Download official minimal Firecracker kernel & alpine rootfs for testing
+          mkdir -p /tmp/fc-fixtures
+          curl -L -o /tmp/fc-fixtures/vmlinux https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux-5.10.186
+          curl -L -o /tmp/fc-fixtures/rootfs.ext4 https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/rootfs/alpine-rootfs.ext4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: shiyao/go.mod
+          cache-dependency-path: shiyao/go.sum
+
+      - name: Run E2E Tests
+        run: |
+          sudo TEST_KERNEL_PATH="/tmp/fc-fixtures/vmlinux" \
+               TEST_ROOTFS_PATH="/tmp/fc-fixtures/rootfs.ext4" \
+               PATH=$PATH:/usr/local/bin \
+               go test -v -tags=e2e ./internal/vm/...
