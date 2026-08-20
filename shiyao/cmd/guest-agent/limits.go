@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,12 +22,11 @@ const (
 	guestNoFileMax   = 4096
 )
 
-func startWithResourceLimits(cmd *exec.Cmd) error {
-	cgroup, err := prepareCgroup()
+func startWithResourceLimits(cmd *exec.Cmd) (func() error, error) {
+	cgroup, cleanupCgroup, err := prepareCgroup()
 	if err != nil {
-		return fmt.Errorf("prepare cgroup: %w", err)
+		return nil, fmt.Errorf("prepare cgroup: %w", err)
 	}
-	defer func() { _ = cgroup.Close() }()
 
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -37,8 +37,11 @@ func startWithResourceLimits(cmd *exec.Cmd) error {
 	cmd.SysProcAttr.CgroupFD = int(cgroup.Fd())
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start command: %w", err)
+		_ = cgroup.Close()
+		_ = cleanupCgroup()
+		return nil, fmt.Errorf("start command: %w", err)
 	}
+	_ = cgroup.Close()
 
 	pid := cmd.Process.Pid
 	killAndReap := func() {
@@ -48,14 +51,27 @@ func startWithResourceLimits(cmd *exec.Cmd) error {
 
 	if err := applyRlimits(pid); err != nil {
 		killAndReap()
-		return fmt.Errorf("apply process limits: %w", err)
+		_ = cleanupCgroup()
+		return nil, fmt.Errorf("apply process limits: %w", err)
 	}
-	return nil
+	return cleanupCgroup, nil
 }
 
-func prepareCgroup() (*os.File, error) {
+func prepareCgroup() (*os.File, func() error, error) {
 	if err := os.MkdirAll(guestCgroupRoot, 0755); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(guestCgroupRoot), "cgroup.subtree_control"), []byte("+cpu +memory +pids"), 0644); err != nil {
+		return nil, nil, fmt.Errorf("enable cgroup controllers: %w", err)
+	}
+
+	name, err := randomCgroupName()
+	if err != nil {
+		return nil, nil, err
+	}
+	path := filepath.Join(guestCgroupRoot, name)
+	if err := os.Mkdir(path, 0755); err != nil {
+		return nil, nil, err
 	}
 
 	settings := map[string]string{
@@ -63,17 +79,34 @@ func prepareCgroup() (*os.File, error) {
 		"pids.max":   strconv.Itoa(guestPidsMax),
 		"cpu.max":    fmt.Sprintf("%d %d", guestCPUQuotaUS, guestCPUPeriodUS),
 	}
-	for name, value := range settings {
-		if err := os.WriteFile(filepath.Join(guestCgroupRoot, name), []byte(value), 0644); err != nil {
-			return nil, err
+	for setting, value := range settings {
+		if err := os.WriteFile(filepath.Join(path, setting), []byte(value), 0644); err != nil {
+			_ = os.Remove(path)
+			return nil, nil, err
 		}
 	}
 
-	fd, err := unix.Open(guestCgroupRoot, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open(path, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, err
+		_ = os.Remove(path)
+		return nil, nil, err
 	}
-	return os.NewFile(uintptr(fd), guestCgroupRoot), nil
+	file := os.NewFile(uintptr(fd), path)
+	cleanup := func() error {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return file, cleanup, nil
+}
+
+func randomCgroupName() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("exec-%x", b[:]), nil
 }
 
 func applyRlimits(pid int) error {
