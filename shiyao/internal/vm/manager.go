@@ -2,7 +2,9 @@ package vm
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +12,43 @@ import (
 	"sync"
 )
 
+// State represents the lifecycle state of a VM instance.
+type State uint8
+
+const (
+	StateCreated State = iota
+	StateConfiguring
+	StateConfigured
+	StateRunning
+	StateStopping
+	StateStopped
+	StateCleanupFailed
+)
+
+func (s State) String() string {
+	switch s {
+	case StateCreated:
+		return "created"
+	case StateConfiguring:
+		return "configuring"
+	case StateConfigured:
+		return "configured"
+	case StateRunning:
+		return "running"
+	case StateStopping:
+		return "stopping"
+	case StateStopped:
+		return "stopped"
+	case StateCleanupFailed:
+		return "cleanup-failed"
+	default:
+		return "unknown"
+	}
+}
+
 // Manager orchestrates multiple concurrent VM instances.
 type Manager struct {
-	mu        sync.RWMutex
+	mu        sync.Mutex
 	instances map[string]*Instance
 
 	baseCfg  Config
@@ -47,13 +83,12 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if _, exists := m.instances[vmID]; exists {
-		m.mu.Unlock()
 		return nil, fmt.Errorf("vm %s already exists", vmID)
 	}
-	m.mu.Unlock()
 
-	// Atomically allocate subnet and CID from pool
 	netCfg, cid, err := m.ipam.Allocate(vmID, m.netCfg)
 	if err != nil {
 		return nil, fmt.Errorf("allocate resources for vm %s: %w", vmID, err)
@@ -67,7 +102,6 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 		fmt.Sprintf("firecracker-%s.sock", vmID),
 	)
 
-	// Fixed: Passing all 6 arguments required by NewInstance
 	inst := NewInstance(
 		vmID,
 		socketPath,
@@ -77,43 +111,38 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 		m.snapCfg,
 	)
 
-	m.mu.Lock()
 	m.instances[vmID] = inst
-	m.mu.Unlock()
 
 	return inst, nil
 }
 
 // DestroyVM stops a VM instance and recycles its network/vsock resources.
+// The instance remains tracked while teardown is in progress so a failed
+// cleanup cannot race with a new VM using the same ID or IP/CID resources.
 func (m *Manager) DestroyVM(ctx context.Context, vmID string) error {
 	m.mu.Lock()
 	inst, exists := m.instances[vmID]
+	m.mu.Unlock()
 	if !exists {
-		m.mu.Unlock()
 		return fmt.Errorf("vm %s not found", vmID)
 	}
 
-	// Remove tracking to prevent concurrent actions during stop
-	delete(m.instances, vmID)
-	m.mu.Unlock()
-
-	// Perform physical stop and teardown outside manager lock
-	err := inst.Stop(ctx)
-
-	// Always release IPAM resources back to the pool regardless of cleanup warning
-	m.ipam.Release(inst.netCfg.GuestIP, inst.vsockCfg.GuestCID)
-
-	if err != nil {
+	if err := inst.Stop(ctx); err != nil {
 		return fmt.Errorf("stop vm %s: %w", vmID, err)
 	}
+
+	m.mu.Lock()
+	delete(m.instances, vmID)
+	m.mu.Unlock()
+	m.ipam.Release(inst.netCfg.GuestIP, inst.vsockCfg.GuestCID)
 
 	return nil
 }
 
 // GetVM retrieves a VM instance by its ID.
 func (m *Manager) GetVM(vmID string) (*Instance, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	inst, exists := m.instances[vmID]
 	if !exists {
@@ -125,8 +154,8 @@ func (m *Manager) GetVM(vmID string) (*Instance, error) {
 
 // ListVMs returns all currently tracked VM IDs.
 func (m *Manager) ListVMs() []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	ids := make([]string, 0, len(m.instances))
 
@@ -137,9 +166,34 @@ func (m *Manager) ListVMs() []string {
 	return ids
 }
 
-// uniqueTapName creates a short deterministic TAP name.
+// generateInstanceID creates a cryptographically random instance identifier
+// for host resource naming to avoid predictable namespace collisions.
+func generateInstanceID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// uniqueTapName creates a short deterministic TAP name based on VM ID.
+// Deprecated: Use uniqueTapNameWithInstanceID for new code to avoid predictable names.
 func uniqueTapName(vmID string) string {
 	sum := sha256.Sum256([]byte(vmID))
+
+	return fmt.Sprintf(
+		"shy%02x%02x%02x%02x",
+		sum[0],
+		sum[1],
+		sum[2],
+		sum[3],
+	)
+}
+
+// uniqueTapNameWithInstanceID creates a TAP name using a random instance ID
+// to avoid predictable firewall chain names and resource collisions.
+func uniqueTapNameWithInstanceID(instanceID string) string {
+	sum := sha256.Sum256([]byte(instanceID))
 
 	return fmt.Sprintf(
 		"shy%02x%02x%02x%02x",
@@ -159,7 +213,7 @@ func validateVMID(vmID string) error {
 		return fmt.Errorf("vm ID is too long")
 	}
 
-	if strings.ContainsAny(vmID, `/\:*?"<>|`) {
+	if strings.ContainsAny(vmID, `/\\:*?"<>|`) {
 		return fmt.Errorf("vm ID %q contains invalid characters", vmID)
 	}
 
