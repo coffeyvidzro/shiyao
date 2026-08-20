@@ -24,15 +24,15 @@ func DefaultManagerLimits() ManagerLimits {
 }
 
 type Manager struct {
-	mu         sync.Mutex
-	instances  map[string]*Instance
-	baseCfg    Config
-	netCfg     network.Config
-	vsockCfg   vsock.Config
-	snapCfg    SnapshotConfig
-	ipam       *network.IPAMPool
-	limits     ManagerLimits
-	provision  chan struct{}
+	mu        sync.Mutex
+	instances map[string]*Instance
+	baseCfg   Config
+	netCfg    network.Config
+	vsockCfg  vsock.Config
+	snapCfg   SnapshotConfig
+	ipam      *network.IPAMPool
+	limits    ManagerLimits
+	provision chan struct{}
 }
 
 func NewManager(baseCfg Config, netCfg network.Config, vsockCfg vsock.Config, snapCfg SnapshotConfig) *Manager {
