@@ -1,6 +1,7 @@
 package network
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"sync"
@@ -22,24 +23,16 @@ type IPAMPool struct {
 
 func NewIPAMPool() *IPAMPool {
 	p := &IPAMPool{usedSubnets: make(map[uint16]bool), usedCIDs: make(map[uint32]bool)}
-	for i := uint16(0); i < MaxSubnets; i++ {
-		p.freeSubnets = append(p.freeSubnets, i)
-	}
-	for cid := uint32(MinGuestCID); cid <= MaxGuestCID; cid++ {
-		p.freeCIDs = append(p.freeCIDs, cid)
-	}
+	for i := uint16(0); i < MaxSubnets; i++ { p.freeSubnets = append(p.freeSubnets, i) }
+	for cid := uint32(MinGuestCID); cid <= MaxGuestCID; cid++ { p.freeCIDs = append(p.freeCIDs, cid) }
 	return p
 }
 
 func (p *IPAMPool) Allocate(vmID string, baseNet Config) (Config, uint32, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if len(p.freeSubnets) == 0 {
-		return Config{}, 0, fmt.Errorf("ipam: subnet pool exhausted (max %d active VMs)", MaxSubnets)
-	}
-	if len(p.freeCIDs) == 0 {
-		return Config{}, 0, fmt.Errorf("ipam: VSOCK CID pool exhausted")
-	}
+	if len(p.freeSubnets) == 0 { return Config{}, 0, fmt.Errorf("ipam: subnet pool exhausted (max %d active VMs)", MaxSubnets) }
+	if len(p.freeCIDs) == 0 { return Config{}, 0, fmt.Errorf("ipam: VSOCK CID pool exhausted") }
 	subnetIdx := p.freeSubnets[len(p.freeSubnets)-1]
 	p.freeSubnets = p.freeSubnets[:len(p.freeSubnets)-1]
 	p.usedSubnets[subnetIdx] = true
@@ -60,19 +53,13 @@ func (p *IPAMPool) Release(guestIP string, cid uint32) {
 	if err == nil && ip != nil {
 		if ip4 := ip.To4(); ip4 != nil {
 			subnetIdx := uint16(ip4[2])
-			if p.usedSubnets[subnetIdx] {
-				delete(p.usedSubnets, subnetIdx)
-				p.freeSubnets = append(p.freeSubnets, subnetIdx)
-			}
+			if p.usedSubnets[subnetIdx] { delete(p.usedSubnets, subnetIdx); p.freeSubnets = append(p.freeSubnets, subnetIdx) }
 		}
 	}
-	if p.usedCIDs[cid] {
-		delete(p.usedCIDs, cid)
-		p.freeCIDs = append(p.freeCIDs, cid)
-	}
+	if p.usedCIDs[cid] { delete(p.usedCIDs, cid); p.freeCIDs = append(p.freeCIDs, cid) }
 }
 
 func uniqueTapName(vmID string) string {
-	// Keep resource naming internal to network; callers provide validated IDs.
-	return fmt.Sprintf("shy%x", vmID)
+	sum := sha256.Sum256([]byte(vmID))
+	return fmt.Sprintf("shy%02x%02x%02x%02x", sum[0], sum[1], sum[2], sum[3])
 }
