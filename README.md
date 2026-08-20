@@ -14,6 +14,7 @@ Shiyao solves this by spinning up ephemeral, strictly isolated microVMs for ever
 - ⚡ **Sub-Second Boot Times:** Cold starts in ~125ms. No waiting for containers to pull or boot.
 - 🌐 **Strict Network Control:** Default-deny egress networking. You define exactly which hosts the agent can talk to.
 - 💾 **Instant Snapshots:** Pre-warm environments with heavy dependencies (PyTorch, Puppeteer) and load them instantly.
+- 📈 **Bounded Capacity:** Admission limits and warm-instance pooling apply backpressure instead of allowing unbounded VM provisioning.
 
 ## The Name
 
@@ -37,6 +38,26 @@ Shiyao is written in **Go** for high-concurrency lifecycle management.
        ▼                       ▼
 [ Control Plane ]       [ Isolated Code Execution ]
 ```
+
+### Sandbox execution path
+
+1. The VMM admits provisioning work through bounded resident-VM and concurrent
+   provisioning limits. When capacity is exhausted, it returns backpressure
+   instead of queuing unbounded host work.
+2. Each guest TAP is registered as an element in the shared `inet shiyao`
+   nftables policy. The policy is default-deny for guest-originated forwarding:
+   it blocks cloud metadata, permits established connections, and permits only
+   configured host-gateway TCP destinations plus DNS.
+3. Host and guest communicate over VSOCK. Execution requests may opt into
+   newline-delimited stdout/stderr frames, capped at 64 KiB per frame and 10
+   MiB of captured output per stream, followed by a terminal result frame.
+4. A `WarmPool` can hold already-started instances. Instances are checked out
+   by lease and must be reset successfully before being made available to a
+   different tenant.
+
+The VMM also exposes `MeasureBoots` for integration benchmarks that compare
+cold-boot and snapshot-resume durations using the same fixture and readiness
+criteria.
 
 ## Quick Start (Local Development)
 
@@ -97,9 +118,11 @@ shiyao/
 
 - [x] Core Firecracker lifecycle management
 - [x] Basic HTTP API for sandbox creation and code execution
-- [ ] Strict egress network filtering (iptables/nftables integration)
-- [ ] Filesystem snapshotting for pre-warmed environments
-- [ ] WebSocket support for real-time stdout/stderr streaming
+- [x] Strict egress network filtering (nftables shared sets)
+- [x] VSOCK stdout/stderr frame streaming with bounded output
+- [x] Bounded provisioning admission and warm-instance pooling
+- [ ] Snapshot fixture lifecycle and published cold-boot/resume benchmark results
+- [ ] WebSocket support for browser-facing stdout/stderr streaming
 
 ## Contributing
 
