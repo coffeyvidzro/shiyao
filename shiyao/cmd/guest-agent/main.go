@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coffeyvidzro/shiyao/internal/vm"
 	"github.com/mdlayher/vsock"
+	"github.com/coffeyvidzro/shiyao/internal/vm"
 )
 
 var commandSlots = make(chan struct{}, vm.MaxConcurrentCommands)
@@ -134,7 +134,8 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	cmd.Stdout = stdoutBuf
 	cmd.Stderr = stderrBuf
 
-	if err := startWithResourceLimits(cmd); err != nil {
+	cleanupCgroup, err := startWithResourceLimits(cmd)
+	if err != nil {
 		result.Error = err.Error()
 		return result
 	}
@@ -142,13 +143,17 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
 
-	var err error
+	var waitErr error
 	select {
-	case err = <-waitCh:
+	case waitErr = <-waitCh:
 	case <-ctx.Done():
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		err = <-waitCh
+		waitErr = <-waitCh
 		result.Error = ctx.Err().Error()
+	}
+
+	if err := cleanupCgroup(); err != nil && result.Error == "" {
+		result.Error = fmt.Sprintf("cleanup command cgroup: %v", err)
 	}
 
 	result.Stdout = stdoutBuf.String()
@@ -159,16 +164,16 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 	if stderrBuf.truncated {
 		result.Stderr += "\n[OUTPUT TRUNCATED DUE TO SIZE LIMIT]"
 	}
-	if err == nil {
+	if waitErr == nil {
 		result.ExitCode = 0
 		return result
 	}
 
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if errors.As(waitErr, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
 	} else if result.Error == "" {
-		result.Error = err.Error()
+		result.Error = waitErr.Error()
 	}
 	return result
 }
