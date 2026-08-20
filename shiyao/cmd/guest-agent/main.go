@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
+	guestvsock "github.com/coffeyvidzro/shiyao/internal/vsock"
 	"github.com/mdlayher/vsock"
-	"github.com/coffeyvidzro/shiyao/internal/vm"
 )
 
-var commandSlots = make(chan struct{}, vm.MaxConcurrentCommands)
+var commandSlots = make(chan struct{}, guestvsock.MaxConcurrentCommands)
 
 func main() {
 	if err := run(); err != nil {
@@ -31,9 +31,9 @@ func run() error {
 		return err
 	}
 
-	listener, err := vsock.Listen(vm.GuestVsockPort, nil)
+	listener, err := vsock.Listen(guestvsock.GuestPort, nil)
 	if err != nil {
-		return fmt.Errorf("listen on guest vsock port %d: %w", vm.GuestVsockPort, err)
+		return fmt.Errorf("listen on guest vsock port %d: %w", guestvsock.GuestPort, err)
 	}
 	defer listener.Close()
 
@@ -54,22 +54,51 @@ func serve(conn io.ReadWriteCloser) {
 		return
 	}
 
-	limitedConn := io.LimitReader(conn, vm.MaxRequestBytes)
+	limitedConn := io.LimitReader(conn, guestvsock.MaxRequestBytes)
 	decoder := json.NewDecoder(bufio.NewReader(limitedConn))
 	decoder.DisallowUnknownFields()
 
-	var req vm.ExecRequest
+	var req guestvsock.ExecRequest
 	if err := decoder.Decode(&req); err != nil {
 		sendError(conn, fmt.Errorf("decode request: %w", err))
 		return
 	}
 
 	result := execute(req)
-	payload, err := vm.EncodeMessage(result)
+	if req.Stream {
+		streamResult(conn, result)
+		return
+	}
+	payload, err := guestvsock.EncodeMessage(result)
 	if err != nil {
 		return
 	}
 	_, _ = conn.Write(payload)
+}
+
+func streamResult(conn io.Writer, result guestvsock.ExecResult) {
+	for _, output := range []struct{ name, data string }{{"stdout", result.Stdout}, {"stderr", result.Stderr}} {
+		for len(output.data) > 0 {
+			n := len(output.data)
+			if n > guestvsock.MaxStreamFrameBytes {
+				n = guestvsock.MaxStreamFrameBytes
+			}
+			frame := guestvsock.ExecFrame{Version: guestvsock.ProtocolVersion, ID: result.ID, Stream: output.name, Data: output.data[:n]}
+			payload, err := guestvsock.EncodeMessage(frame)
+			if err != nil {
+				return
+			}
+			if _, err := conn.Write(payload); err != nil {
+				return
+			}
+			output.data = output.data[n:]
+		}
+	}
+	result.Stdout, result.Stderr = "", ""
+	payload, err := guestvsock.EncodeMessage(guestvsock.ExecFrame{Version: guestvsock.ProtocolVersion, ID: result.ID, Result: &result})
+	if err == nil {
+		_, _ = conn.Write(payload)
+	}
 }
 
 func authorizedHost(conn io.ReadWriteCloser) bool {
@@ -78,24 +107,24 @@ func authorizedHost(conn io.ReadWriteCloser) bool {
 		return false
 	}
 	addr, ok := c.RemoteAddr().(*vsock.Addr)
-	return ok && addr.CID == 2
+	return ok && addr.ContextID == guestvsock.HostCID
 }
 
 func sendError(conn io.Writer, err error) {
-	result := vm.ExecResult{
-		Version:  vm.ProtocolVersion,
+	result := guestvsock.ExecResult{
+		Version:  guestvsock.ProtocolVersion,
 		ExitCode: -1,
 		Error:    err.Error(),
 	}
-	payload, encodeErr := vm.EncodeMessage(result)
+	payload, encodeErr := guestvsock.EncodeMessage(result)
 	if encodeErr == nil {
 		_, _ = conn.Write(payload)
 	}
 }
 
-func execute(req vm.ExecRequest) vm.ExecResult {
-	result := vm.ExecResult{
-		Version:  vm.ProtocolVersion,
+func execute(req guestvsock.ExecRequest) guestvsock.ExecResult {
+	result := guestvsock.ExecResult{
+		Version:  guestvsock.ProtocolVersion,
 		ID:       req.ID,
 		ExitCode: -1,
 	}
@@ -129,8 +158,8 @@ func execute(req vm.ExecRequest) vm.ExecResult {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 
-	stdoutBuf := &limitedBuffer{limit: vm.MaxOutputBytes}
-	stderrBuf := &limitedBuffer{limit: vm.MaxOutputBytes}
+	stdoutBuf := &limitedBuffer{limit: guestvsock.MaxOutputBytes}
+	stderrBuf := &limitedBuffer{limit: guestvsock.MaxOutputBytes}
 	cmd.Stdout = stdoutBuf
 	cmd.Stderr = stderrBuf
 

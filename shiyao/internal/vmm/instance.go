@@ -18,18 +18,18 @@ import (
 )
 
 type Instance struct {
-	mu sync.Mutex
-	ID string
+	mu         sync.Mutex
+	ID         string
 	InstanceID string
 	SocketPath string
-	cfg Config
-	netCfg network.Config
-	vsockCfg vsock.Config
-	snapCfg SnapshotConfig
-	snapInteg SnapshotIntegrity
-	machine *fc.Machine
-	cleanups []func() error
-	state State
+	cfg        Config
+	netCfg     network.Config
+	vsockCfg   vsock.Config
+	snapCfg    SnapshotConfig
+	snapInteg  SnapshotIntegrity
+	machine    *fc.Machine
+	cleanups   []func() error
+	state      State
 }
 
 func NewInstance(id, socketPath string, cfg Config, netCfg network.Config, vsockCfg vsock.Config, snapCfg SnapshotConfig) *Instance {
@@ -39,49 +39,86 @@ func NewInstance(id, socketPath string, cfg Config, netCfg network.Config, vsock
 func (i *Instance) Configure(ctx context.Context) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.state != StateCreated { return fmt.Errorf("instance %s cannot be configured in state %s", i.ID, i.state) }
+	if i.state != StateCreated {
+		return fmt.Errorf("instance %s cannot be configured in state %s", i.ID, i.state)
+	}
 	i.state = StateConfiguring
 	var err error
 	i.InstanceID, err = generateInstanceID()
-	if err != nil { i.state = StateCreated; return fmt.Errorf("generate instance ID: %w", err) }
-	if err := i.cfg.Validate(); err != nil { i.state = StateCreated; return fmt.Errorf("invalid config: %w", err) }
-	if err := i.netCfg.Validate(); err != nil { i.state = StateCreated; return fmt.Errorf("invalid network config: %w", err) }
+	if err != nil {
+		i.state = StateCreated
+		return fmt.Errorf("generate instance ID: %w", err)
+	}
+	if err := i.cfg.Validate(); err != nil {
+		i.state = StateCreated
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	if err := i.netCfg.Validate(); err != nil {
+		i.state = StateCreated
+		return fmt.Errorf("invalid network config: %w", err)
+	}
 	configured := false
 	defer func() {
 		if !configured {
-			for j := len(i.cleanups)-1; j >= 0; j-- { _ = i.cleanups[j]() }
+			for j := len(i.cleanups) - 1; j >= 0; j-- {
+				_ = i.cleanups[j]()
+			}
 			i.cleanups = nil
 		}
 	}()
-	if err := network.SetupTAP(ctx, i.netCfg); err != nil { i.state = StateCreated; return fmt.Errorf("setup tap: %w", err) }
+	if err := network.SetupTAP(ctx, i.netCfg); err != nil {
+		i.state = StateCreated
+		return fmt.Errorf("setup tap: %w", err)
+	}
 	i.cleanups = append(i.cleanups, func() error { return network.CleanupTAP(ctx, i.netCfg.TapName) })
-	if err := network.SetupFirewall(ctx, i.netCfg); err != nil { i.state = StateCreated; return fmt.Errorf("setup firewall: %w", err) }
+	if err := network.SetupFirewall(ctx, i.netCfg); err != nil {
+		i.state = StateCreated
+		return fmt.Errorf("setup firewall: %w", err)
+	}
 	i.cleanups = append(i.cleanups, func() error { return network.CleanupFirewall(ctx, i.netCfg) })
 	guestIP, guestNetwork, err := net.ParseCIDR(i.netCfg.GuestIP)
-	if err != nil { i.state = StateCreated; return fmt.Errorf("parse guest IP %q: %w", i.netCfg.GuestIP, err) }
+	if err != nil {
+		i.state = StateCreated
+		return fmt.Errorf("parse guest IP %q: %w", i.netCfg.GuestIP, err)
+	}
 	guestNetwork.IP = guestIP
 	gatewayIP := net.ParseIP(i.netCfg.HostIP)
-	if gatewayIP == nil { i.state = StateCreated; return fmt.Errorf("parse host/gateway IP %q: invalid IP", i.netCfg.HostIP) }
+	if gatewayIP == nil {
+		i.state = StateCreated
+		return fmt.Errorf("parse host/gateway IP %q: invalid IP", i.netCfg.HostIP)
+	}
 	fcConfig := fc.Config{
-		SocketPath: i.SocketPath,
-		Drives: []models.Drive{{DriveID: fc.String("rootfs"), PathOnHost: fc.String(i.cfg.RootfsPath), IsRootDevice: fc.Bool(true), IsReadOnly: fc.Bool(true)}},
-		MachineCfg: models.MachineConfiguration{VcpuCount: fc.Int64(int64(i.cfg.VCPUCount)), MemSizeMib: fc.Int64(int64(i.cfg.MemSizeMB))},
+		SocketPath:        i.SocketPath,
+		Drives:            []models.Drive{{DriveID: fc.String("rootfs"), PathOnHost: fc.String(i.cfg.RootfsPath), IsRootDevice: fc.Bool(true), IsReadOnly: fc.Bool(true)}},
+		MachineCfg:        models.MachineConfiguration{VcpuCount: fc.Int64(int64(i.cfg.VCPUCount)), MemSizeMib: fc.Int64(int64(i.cfg.MemSizeMB))},
 		NetworkInterfaces: []fc.NetworkInterface{{StaticConfiguration: &fc.StaticNetworkConfiguration{HostDevName: i.netCfg.TapName, MacAddress: generateMAC(i.ID), IPConfiguration: &fc.IPConfiguration{IPAddr: *guestNetwork, Gateway: gatewayIP}}}},
-		VsockDevices: []fc.VsockDevice{{ID: "vsock0", CID: i.vsockCfg.GuestCID}},
+		VsockDevices:      []fc.VsockDevice{{ID: "vsock0", CID: i.vsockCfg.GuestCID}},
 	}
 	var opts []fc.Opt
 	if i.snapCfg.EnableResume {
-		if i.snapCfg.MemFilePath == "" || i.snapCfg.StateFilePath == "" { i.state = StateCreated; return fmt.Errorf("snapshot restore enabled but snapshot paths are missing") }
-		if err := i.validateSnapshotIntegrity(); err != nil { i.state = StateCreated; return fmt.Errorf("validate snapshot integrity: %w", err) }
+		if i.snapCfg.MemFilePath == "" || i.snapCfg.StateFilePath == "" {
+			i.state = StateCreated
+			return fmt.Errorf("snapshot restore enabled but snapshot paths are missing")
+		}
+		if err := i.validateSnapshotIntegrity(); err != nil {
+			i.state = StateCreated
+			return fmt.Errorf("validate snapshot integrity: %w", err)
+		}
 		opts = append(opts, fc.WithSnapshot(i.snapCfg.MemFilePath, i.snapCfg.StateFilePath))
 	} else {
 		fcConfig.KernelImagePath = i.cfg.KernelPath
 		kernelArgs, err := guestKernelArgs(i.cfg.BootArgs, i.cfg.GuestAgentPath)
-		if err != nil { i.state = StateCreated; return err }
+		if err != nil {
+			i.state = StateCreated
+			return err
+		}
 		fcConfig.KernelArgs = kernelArgs
 	}
 	machine, err := fc.NewMachine(ctx, fcConfig, opts...)
-	if err != nil { i.state = StateCreated; return fmt.Errorf("create firecracker machine: %w", err) }
+	if err != nil {
+		i.state = StateCreated
+		return fmt.Errorf("create firecracker machine: %w", err)
+	}
 	i.machine = machine
 	configured = true
 	i.state = StateConfigured
@@ -89,39 +126,65 @@ func (i *Instance) Configure(ctx context.Context) error {
 }
 
 func (i *Instance) Start(ctx context.Context) error {
-	i.mu.Lock(); defer i.mu.Unlock()
-	if i.state != StateConfigured { return fmt.Errorf("instance %s cannot be started in state %s", i.ID, i.state) }
-	if i.machine == nil { return fmt.Errorf("machine not configured") }
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.state != StateConfigured {
+		return fmt.Errorf("instance %s cannot be started in state %s", i.ID, i.state)
+	}
+	if i.machine == nil {
+		return fmt.Errorf("machine not configured")
+	}
 	if i.snapCfg.EnableResume {
-		if err := i.machine.ResumeVM(ctx); err != nil { return fmt.Errorf("resume microvm snapshot: %w", err) }
-	} else if err := i.machine.Start(ctx); err != nil { return fmt.Errorf("start guest os: %w", err) }
+		if err := i.machine.ResumeVM(ctx); err != nil {
+			return fmt.Errorf("resume microvm snapshot: %w", err)
+		}
+	} else if err := i.machine.Start(ctx); err != nil {
+		return fmt.Errorf("start guest os: %w", err)
+	}
 	i.state = StateRunning
 	return nil
 }
 
 func (i *Instance) Stop(ctx context.Context) error {
-	i.mu.Lock(); defer i.mu.Unlock()
-	if i.state != StateRunning && i.state != StateConfigured && i.state != StateCleanupFailed { return nil }
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.state != StateRunning && i.state != StateConfigured && i.state != StateCleanupFailed {
+		return nil
+	}
 	i.state = StateStopping
 	var errs []error
 	if i.machine != nil {
-		if err := i.machine.StopVMM(); err != nil { errs = append(errs, fmt.Errorf("stop vmm: %w", err)) } else { i.machine = nil }
+		if err := i.machine.StopVMM(); err != nil {
+			errs = append(errs, fmt.Errorf("stop vmm: %w", err))
+		} else {
+			i.machine = nil
+		}
 	}
 	remaining := make([]func() error, 0, len(i.cleanups))
-	for j := len(i.cleanups)-1; j >= 0; j-- {
-		if err := i.cleanups[j](); err != nil { errs = append(errs, fmt.Errorf("cleanup step %d: %w", j, err)); remaining = append(remaining, i.cleanups[j]) }
+	for j := len(i.cleanups) - 1; j >= 0; j-- {
+		if err := i.cleanups[j](); err != nil {
+			errs = append(errs, fmt.Errorf("cleanup step %d: %w", j, err))
+			remaining = append(remaining, i.cleanups[j])
+		}
 	}
 	i.cleanups = remaining
 	if len(i.cleanups) == 0 {
-		if err := os.Remove(i.SocketPath); err != nil && !os.IsNotExist(err) { errs = append(errs, fmt.Errorf("remove socket: %w", err)) }
+		if err := os.Remove(i.SocketPath); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("remove socket: %w", err))
+		}
 	}
-	if len(errs) > 0 || len(i.cleanups) > 0 || i.machine != nil { i.state = StateCleanupFailed; return fmt.Errorf("stop instance %s: %w", i.ID, errors.Join(errs...)) }
+	if len(errs) > 0 || len(i.cleanups) > 0 || i.machine != nil {
+		i.state = StateCleanupFailed
+		return fmt.Errorf("stop instance %s: %w", i.ID, errors.Join(errs...))
+	}
 	i.state = StateStopped
 	return nil
 }
 
 func generateInstanceID() (string, error) {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil { return "", err }
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
 	return hex.EncodeToString(b), nil
 }

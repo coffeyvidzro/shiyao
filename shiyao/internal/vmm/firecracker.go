@@ -22,7 +22,9 @@ func guestKernelArgs(bootArgs, guestAgentPath string) (string, error) {
 	args := strings.Fields(strings.TrimSpace(bootArgs))
 	trusted := make([]string, 0, len(args)+1)
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "init=") { continue }
+		if strings.HasPrefix(arg, "init=") {
+			continue
+		}
 		trusted = append(trusted, arg)
 	}
 	trusted = append(trusted, "init="+guestAgentPath)
@@ -30,8 +32,14 @@ func guestKernelArgs(bootArgs, guestAgentPath string) (string, error) {
 }
 
 func validateVMID(vmID string) error {
-	if vmID == "" { return fmt.Errorf("vm ID is required") }
-	if len(vmID) > 64 { return fmt.Errorf("vm ID is too long") }
-	if strings.ContainsAny(vmID, `/\\:*?"<>|`) { return fmt.Errorf("vm ID %q contains invalid characters", vmID) }
+	if vmID == "" {
+		return fmt.Errorf("vm ID is required")
+	}
+	if len(vmID) > 64 {
+		return fmt.Errorf("vm ID is too long")
+	}
+	if strings.ContainsAny(vmID, `/\\:*?"<>|`) {
+		return fmt.Errorf("vm ID %q contains invalid characters", vmID)
+	}
 	return nil
 }

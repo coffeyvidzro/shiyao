@@ -2,28 +2,51 @@ package vmm
 
 import (
 	"context"
-	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/coffeyvidzro/shiyao/internal/network"
 	"github.com/coffeyvidzro/shiyao/internal/vsock"
 )
 
+var ErrBackpressure = errors.New("vmm admission limit reached")
+
+// ManagerLimits bounds resident VMs and expensive host-side provisioning work.
+type ManagerLimits struct {
+	MaxVMs                 int
+	MaxConcurrentProvision int
+}
+
+func DefaultManagerLimits() ManagerLimits {
+	return ManagerLimits{MaxVMs: 256, MaxConcurrentProvision: 8}
+}
+
 type Manager struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	instances map[string]*Instance
-	baseCfg  Config
-	netCfg   network.Config
-	vsockCfg vsock.Config
-	snapCfg  SnapshotConfig
-	ipam     *network.IPAMPool
+	baseCfg   Config
+	netCfg    network.Config
+	vsockCfg  vsock.Config
+	snapCfg   SnapshotConfig
+	ipam      *network.IPAMPool
+	limits    ManagerLimits
+	provision chan struct{}
 }
 
 func NewManager(baseCfg Config, netCfg network.Config, vsockCfg vsock.Config, snapCfg SnapshotConfig) *Manager {
+	return NewManagerWithLimits(baseCfg, netCfg, vsockCfg, snapCfg, DefaultManagerLimits())
+}
+
+func NewManagerWithLimits(baseCfg Config, netCfg network.Config, vsockCfg vsock.Config, snapCfg SnapshotConfig, limits ManagerLimits) *Manager {
+	if limits.MaxVMs <= 0 {
+		limits.MaxVMs = DefaultManagerLimits().MaxVMs
+	}
+	if limits.MaxConcurrentProvision <= 0 {
+		limits.MaxConcurrentProvision = DefaultManagerLimits().MaxConcurrentProvision
+	}
 	return &Manager{
 		instances: make(map[string]*Instance),
 		baseCfg:   baseCfg,
@@ -31,6 +54,8 @@ func NewManager(baseCfg Config, netCfg network.Config, vsockCfg vsock.Config, sn
 		vsockCfg:  vsockCfg,
 		snapCfg:   snapCfg,
 		ipam:      network.NewIPAMPool(),
+		limits:    limits,
+		provision: make(chan struct{}, limits.MaxConcurrentProvision),
 	}
 }
 
@@ -40,6 +65,9 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.instances) >= m.limits.MaxVMs {
+		return nil, fmt.Errorf("%w: maximum of %d resident VMs", ErrBackpressure, m.limits.MaxVMs)
+	}
 	if _, exists := m.instances[vmID]; exists {
 		return nil, fmt.Errorf("vm %s already exists", vmID)
 	}
@@ -53,6 +81,44 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 	inst := NewInstance(vmID, socketPath, m.baseCfg, netCfg, vsockCfg, m.snapCfg)
 	m.instances[vmID] = inst
 	return inst, nil
+}
+
+// ProvisionVM performs configuration and boot under a bounded admission gate.
+// It fails fast when the host is saturated rather than accumulating unbounded
+// queued TAP, nftables, Firecracker, and snapshot operations.
+func (m *Manager) ProvisionVM(ctx context.Context, vmID string) (*Instance, error) {
+	select {
+	case m.provision <- struct{}{}:
+		defer func() { <-m.provision }()
+	default:
+		return nil, fmt.Errorf("%w: %d provisioning operations already running", ErrBackpressure, m.limits.MaxConcurrentProvision)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	inst, err := m.CreateVM(vmID)
+	if err != nil {
+		return nil, err
+	}
+	if err := inst.Configure(ctx); err != nil {
+		m.removeFailedVM(vmID, inst)
+		return nil, fmt.Errorf("configure vm %s: %w", vmID, err)
+	}
+	if err := inst.Start(ctx); err != nil {
+		_ = inst.Stop(ctx)
+		m.removeFailedVM(vmID, inst)
+		return nil, fmt.Errorf("start vm %s: %w", vmID, err)
+	}
+	return inst, nil
+}
+
+func (m *Manager) removeFailedVM(vmID string, inst *Instance) {
+	m.mu.Lock()
+	if m.instances[vmID] == inst {
+		delete(m.instances, vmID)
+	}
+	m.mu.Unlock()
+	m.ipam.Release(inst.netCfg.GuestIP, inst.vsockCfg.GuestCID)
 }
 
 func (m *Manager) DestroyVM(ctx context.Context, vmID string) error {
@@ -90,22 +156,4 @@ func (m *Manager) ListVMs() []string {
 		ids = append(ids, id)
 	}
 	return ids
-}
-
-func uniqueTapNameWithInstanceID(instanceID string) string {
-	sum := sha256.Sum256([]byte(instanceID))
-	return fmt.Sprintf("shy%02x%02x%02x%02x", sum[0], sum[1], sum[2], sum[3])
-}
-
-func validateVMID(vmID string) error {
-	if vmID == "" {
-		return fmt.Errorf("vm ID is required")
-	}
-	if len(vmID) > 64 {
-		return fmt.Errorf("vm ID is too long")
-	}
-	if strings.ContainsAny(vmID, `/\\:*?"<>|`) {
-		return fmt.Errorf("vm ID %q contains invalid characters", vmID)
-	}
-	return nil
 }

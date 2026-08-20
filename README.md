@@ -1,234 +1,190 @@
-# Shiyao (石爻)
+# Shiyao
 
 **Secure, sub-second microVM execution environment for AI agents.**
 
-Shiyao provides hardware-level isolated microVMs for AI agents to safely execute code, browse the web, and interact with tools. Powered by [Firecracker](https://firecracker-microvm.github.io/), it boots isolated environments in ~125ms, ensuring your AI agents can work at the speed of thought without compromising your infrastructure.
+Shiyao is a Go control plane for running AI-agent workloads inside isolated
+[Firecracker](https://firecracker-microvm.github.io/) microVMs. It is designed
+for Linux hosts that can provide KVM, VSOCK, TAP devices, nftables, and cgroup
+v2 controls.
 
-## Why Shiyao?
+## The name
 
-Modern AI agents (like AutoGen, CrewAI, or custom LLM workflows) need to execute code to accomplish tasks. But running untrusted, LLM-generated code on your servers is a massive security risk.
+**Shiyao (石爻)** combines two ideas that describe the project boundary:
 
-Shiyao solves this by spinning up ephemeral, strictly isolated microVMs for every execution.
+- **石 (Shí)** — stone or bedrock; the durable isolation boundary around an
+  untrusted workload.
+- **爻 (Yáo)** — the binary lines of the *I Ching*; the computational work
+  performed inside that boundary.
 
-- 🛡️ **Hardware-Level Isolation:** Built on Firecracker microVMs, providing stronger security boundaries than standard Docker containers.
-- ⚡ **Sub-Second Boot Times:** Cold starts in ~125ms. No waiting for containers to pull or boot.
-- 🌐 **Strict Network Control:** Default-deny egress networking. You define exactly which hosts the agent can talk to.
-- 💾 **Instant Snapshots:** Pre-warm environments with heavy dependencies (PyTorch, Puppeteer) and load them instantly.
+The goal is a strong, reviewable execution boundary for AI-generated code.
 
-## The Name
+## What it provides
 
-**Shiyao (石爻)** combines two ancient concepts to represent our mission:
-
-- **石 (Shí):** Stone / Bedrock. Represents the unbreakable, secure boundary of our infrastructure.
-- **爻 (Yáo):** The binary lines of the _I Ching_. Represents the fundamental logic and computation of AI.
-
-_We build the unbreakable stone vault where AI binary logic can safely execute._
+- **Firecracker lifecycle management** for creating, starting, stopping, and
+  snapshot-resuming microVMs.
+- **Isolated networking** using one TAP device per guest and a shared nftables
+  policy that is default-deny for guest-originated forwarding.
+- **VSOCK command execution** with strict request validation, bounded command
+  concurrency, output limits, and optional framed stdout/stderr delivery.
+- **Admission control** that bounds resident VMs and concurrent provisioning
+  operations, returning backpressure instead of accumulating host work.
+- **Warm-instance pooling** for reusing prepared VMs only after a caller-supplied
+  reset operation succeeds.
+- **Snapshot integrity hooks** and a small cold-boot versus snapshot-resume
+  measurement utility for integration benchmarks.
 
 ## Architecture
 
-Shiyao is written in **Go** for high-concurrency lifecycle management.
-
 ```text
-[ AI Agent / LLM ]
-       │
-       ▼
-[ Shiyao API (Go) ] ──> [ Firecracker MicroVM (Linux) ]
-       │                       │
-       ▼                       ▼
-[ Control Plane ]       [ Isolated Code Execution ]
+AI agent / application
+        |
+        v
+Shiyao control plane
+        |
+        +-- VMM admission gate ----> Firecracker microVM
+        |                                  |
+        |                                  +-- guest agent over VSOCK
+        |
+        +-- shared nftables policy --> per-VM TAP interface
 ```
 
-## Quick Start (Local Development)
+### VM lifecycle
 
-_Note: Firecracker requires a Linux environment with KVM support. If you are on macOS or Windows, you will need to use a Linux VM or WSL2 with nested virtualization enabled._
+1. `Manager.ProvisionVM` obtains a bounded provisioning slot and allocates a
+   guest subnet, VSOCK CID, TAP name, and Firecracker socket path.
+2. The VMM creates the TAP device and adds the guest's allowed destinations to
+   the shared `inet shiyao` nftables sets.
+3. Firecracker starts either from a kernel/rootfs configuration or from a
+   snapshot resume configuration.
+4. The guest agent accepts authenticated VSOCK execution requests.
+5. On teardown, Shiyao removes the nftables set elements, TAP device, socket,
+   and IPAM/VSOCK allocations.
 
-### Prerequisites
+## Network policy
 
-- Go 1.26+
-- Linux with KVM support (`/dev/kvm` must be accessible)
+Guest forwarding is default-deny. The shared nftables forward chain:
 
-### Build and Run
+- blocks access to `169.254.169.254` (cloud metadata);
+- allows established and related connections;
+- allows guest DNS to its configured host gateway on UDP port 53;
+- allows the configured host proxy and explicitly configured TCP ports on that
+  gateway; and
+- drops all other traffic originating from a managed TAP interface.
+
+Each VM changes only set elements, rather than creating a dedicated firewall
+chain. This keeps TAP/firewall setup small and makes policy updates atomic at
+the nftables transaction level.
+
+## VSOCK execution protocol
+
+The host connects to the guest agent on VSOCK port `1024`. Requests include a
+protocol version, request ID, command, arguments, environment allowlist, and
+optional timeout.
+
+- Requests are capped at 1 MiB.
+- Commands are limited to four concurrent executions per guest.
+- Captured stdout and stderr are each capped at 10 MiB.
+- Requests can opt into newline-delimited output frames. Each frame carries at
+  most 64 KiB, followed by one terminal result frame.
+
+The host-side API is `internal/vsock.Exec` for a one-shot result and
+`internal/vsock.ExecStream` for framed output delivery.
+
+## Capacity and warm instances
+
+`vmm.ManagerLimits` controls the maximum resident VM count and maximum number
+of concurrent provisioning operations. Saturation returns `vmm.ErrBackpressure`
+so callers can retry, shed load, or queue work outside the host control plane.
+
+`vmm.WarmPool` manages leases for running, prepared instances. An instance is
+never returned to the idle pool until its supplied reset operation succeeds; a
+reset failure stops and evicts it to avoid cross-tenant state reuse.
+
+## Benchmarking boot paths
+
+`vmm.MeasureBoots` accepts cold-boot and snapshot-resume operations and returns
+their durations. Use it in a privileged integration benchmark with identical
+fixtures and a shared guest-readiness check to compare the two paths.
+
+## Requirements
+
+- Go 1.26.6 or later (see `shiyao/go.mod`)
+- Linux with KVM access (`/dev/kvm`)
+- Firecracker for VM integration runs
+- nftables for guest network policy
+- cgroup v2 delegation for guest command resource-limit integration tests
+
+## Development
 
 ```bash
-# Clone the repository
-git clone https://github.com/coffeyvidzro/shiyao.git
+# Run formatting and unit tests.
 cd shiyao
+test -z "$(gofmt -l .)"
+go test -p 1 ./...
 
-# Install dependencies and build the daemon
-make build
-
-# Run the daemon locally (default port: 8080)
-./bin/shiyao-daemon
+# Build all command binaries.
+go build ./cmd/...
 ```
 
-### Test the API
-
-Once the daemon is running, you can test the sandbox creation endpoint:
+Guest sandbox integration tests require root and host kernel capabilities:
 
 ```bash
-curl -X POST http://localhost:8080/v1/sandboxes \
-  -H "Content-Type: application/json" \
-  -d '{
-    "template": "python-3.11",
-    "timeout": 30
-  }'
+cd shiyao
+sudo -E "$(command -v go)" test -tags=integration ./cmd/guest-agent -v -count=1
 ```
 
-<!-- ## SDKs
+Tests skip cgroup or OverlayFS assertions when the executing environment does
+not delegate the necessary kernel capabilities.
 
-We maintain officially supported SDKs in separate repositories to ensure clean release cycles and focused developer experiences:
+## Configuration (`shiyao.yaml`)
 
-*   🐍 **Python SDK:** [github.com/coffeyvidzro/shiyao-python](https://github.com/coffeyvidzro/shiyao-python)
-*   🟦 **TypeScript SDK:** [github.com/coffeyvidzro/shiyao-js](https://github.com/coffeyvidzro/shiyao-js) -->
-
-## Project Structure
-
-```text
-shiyao/
-├── cmd/                  # Entry points (daemon, cli)
-├── internal/             # Core logic (sandbox, api, security)
-├── pkg/                  # Shared Go libraries and Firecracker wrappers
-├── deploy/               # Dockerfile and local run scripts
-├── test/                 # Integration and security tests
-└── docs/                 # Architecture and API specifications
-```
-
-## Roadmap
-
-- [x] Core Firecracker lifecycle management
-- [x] Basic HTTP API for sandbox creation and code execution
-- [ ] Strict egress network filtering (iptables/nftables integration)
-- [ ] Filesystem snapshotting for pre-warmed environments
-- [ ] WebSocket support for real-time stdout/stderr streaming
-
-## Contributing
-
-We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING.md) before submitting a Pull Request.
-
-_Note: Because Shiyao interacts with low-level hypervisor features, please ensure you have tested your changes in a Linux environment with KVM enabled._
-
-## License
-
-Shiyao is licensed under the **Apache 2.0 License**. See the [LICENSE](LICENSE) file for details.
-
-## 🔧 Configuration: `shiyao.yaml`
-
-Shiyao uses a declarative YAML file to define **snapshots** – pre‑built, reusable microVM images. This file controls everything from base OS and dependencies to resource limits and network policies.
-
-### Schema Reference
-
-| Field                       | Type                | Required | Default                                           | Description                                                                                                 |
-| --------------------------- | ------------------- | -------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `version`                   | `string`            | No       | `"v1alpha1"`                                      | Schema version (for future compatibility).                                                                  |
-| `name`                      | `string`            | **Yes**  | —                                                 | Human‑readable name for the snapshot (used as identifier).                                                  |
-| `description`               | `string`            | No       | `""`                                              | Optional description of the environment.                                                                    |
-| `runtime`                   | `object`            | No       | `{os: linux, distro: ubuntu-22.04, arch: x86_64}` | Base OS configuration.                                                                                      |
-| `runtime.os`                | `string`            | No       | `"linux"`                                         | Only `linux` is supported.                                                                                  |
-| `runtime.distro`            | `string`            | No       | `"ubuntu-22.04"`                                  | Distribution name (e.g., `ubuntu-22.04`, `debian-12`).                                                      |
-| `runtime.architecture`      | `string`            | No       | `"x86_64"`                                        | CPU architecture (`x86_64` only for now).                                                                   |
-| `language`                  | `object`            | No       | —                                                 | Primary language runtime (e.g., Python, Node).                                                              |
-| `language.name`             | `string`            | No       | `"python"`                                        | Language name (`python`, `node`, `go`, etc.).                                                               |
-| `language.version`          | `string`            | No       | `"3.11"`                                          | Version string (e.g., `3.11`, `18.17`).                                                                     |
-| `dependencies`              | `object`            | No       | —                                                 | Lists of packages to install.                                                                               |
-| `dependencies.system`       | `array` of `string` | No       | `[]`                                              | System packages (installed via `apt-get`).                                                                  |
-| `dependencies.pip`          | `array` of `string` | No       | `[]`                                              | Python packages (installed via `pip`).                                                                      |
-| `dependencies.npm`          | `array` of `string` | No       | `[]`                                              | Node.js global packages (installed via `npm -g`).                                                           |
-| `resources`                 | `object`            | **Yes**  | —                                                 | CPU, memory, and disk limits.                                                                               |
-| `resources.vcpu`            | `integer`           | **Yes**  | —                                                 | Number of vCPUs (≥ 1).                                                                                      |
-| `resources.memory_mb`       | `integer`           | **Yes**  | —                                                 | Memory in MiB (≥ 128, recommended ≥ 512).                                                                   |
-| `resources.disk_mb`         | `integer`           | **Yes**  | —                                                 | Disk size in MiB (≥ 1024).                                                                                  |
-| `env`                       | `object`            | No       | `{}`                                              | Environment variables (key‑value) set inside the VM.                                                        |
-| `network`                   | `object`            | No       | `{block_private_ips: true}`                       | Network egress policies.                                                                                    |
-| `network.allowed_domains`   | `array` of `string` | No       | `[]`                                              | Domains the VM may connect to (e.g., `["api.openai.com"]`). If empty, all egress is blocked (default‑deny). |
-| `network.block_private_ips` | `boolean`           | No       | `true`                                            | Whether to block private IP ranges (prevents SSRF).                                                         |
-
-> **Note:** `system` dependencies are installed using `apt-get update -y` and `apt-get install -y`. Ensure your base image has a working package manager.
-
----
-
-### ✅ Validation Rules
-
-- `name` – must be non‑empty.
-- `vcpu` – must be > 0.
-- `memory_mb` – must be ≥ 128 (minimum for Firecracker).
-- `disk_mb` – must be ≥ 1024 (1 GiB) to fit a basic OS.
-
-If any of these fail, the build will abort with a clear error message.
-
----
-
-### 📝 Example `shiyao.yaml`
+`shiyao.yaml` is the declarative description of a reusable snapshot image. It
+defines the base runtime, language dependencies, resource envelope,
+environment, and outbound-network intent used when preparing a VM image.
 
 ```yaml
 version: "v1alpha1"
-name: "ml-inference-agent"
-description: "PyTorch + Transformers for code‑generation agents"
+name: python-agent
+description: Python environment for an AI coding agent
 
 runtime:
-    os: linux
-    distro: ubuntu-22.04
-    architecture: x86_64
+  os: linux
+  distro: ubuntu-22.04
+  architecture: x86_64
 
 language:
-    name: python
-    version: "3.11"
+  name: python
+  version: "3.11"
 
 dependencies:
-    system:
-        - curl
-        - git
-        - build-essential
-    pip:
-        - torch==2.0.1
-        - transformers>=4.30.0
-        - accelerate
-        - playwright==1.40.0
-    npm:
-        - puppeteer@21.0.0
+  system: [curl, git]
+  pip: [requests]
 
 resources:
-    vcpu: 2
-    memory_mb: 4096
-    disk_mb: 5120
+  vcpu: 2
+  memory_mb: 512
+  disk_mb: 1024
 
 env:
-    PYTHONUNBUFFERED: "1"
-    TRANSFORMERS_CACHE: "/tmp/cache"
+  PYTHONUNBUFFERED: "1"
 
 network:
-    allowed_domains:
-        - api.openai.com
-        - huggingface.co
-    block_private_ips: true
+  allowed_domains: [api.openai.com]
+  block_private_ips: true
 ```
 
----
+Required resource values are `vcpu`, `memory_mb`, and `disk_mb`; values must
+be positive, with at least 128 MiB of memory and a 1 GiB disk. Pin dependency
+versions where reproducibility matters. The runtime currently targets Linux
+on `x86_64`.
 
-### 🧠 How It Works
+## Status
 
-1. **Build**: When you run `shiyao snapshot build --config shiyao.yaml`, the builder:
-    - Copies the base OS image.
-    - Mounts it via loopback.
-    - `chroot`s into it and runs all `apt`, `pip`, and `npm` commands.
-    - Sets environment variables.
-    - Shrinks the filesystem to save space.
-    - Saves the resulting image as a snapshot.
+Shiyao is under active development. The networking, VSOCK, admission-control,
+and warm-pool components are implementation foundations; production deployments
+should run privileged integration tests against their target kernel, nftables,
+Firecracker, and cgroup configuration before accepting untrusted workloads.
 
-2. **Run**: Later, when you execute code with `shiyao run --snapshot <name>`, the daemon boots a Firecracker microVM from that snapshot in ~125ms.
+## License
 
----
-
-### 🛠️ Tips
-
-- **Pin package versions** (e.g., `torch==2.0.1`) for reproducible builds.
-- Keep `disk_mb` as low as possible – the builder will automatically shrink the filesystem after installation, but you still pay for storage.
-- Use `allowed_domains` to enforce strict egress – the default‑deny policy adds a strong security layer.
-- For heavy dependencies (PyTorch, TensorFlow), consider building a dedicated snapshot once and reusing it across all your agents.
-
----
-
-### 🚧 Planned Enhancements
-
-- Support for `pre_install` and `post_install` scripts.
-- Full‑memory snapshots (restore in < 50ms).
-- Integration with remote snapshot registries (S3, OCI).
+Shiyao is licensed under the [MIT License](LICENSE).
