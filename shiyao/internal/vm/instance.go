@@ -74,12 +74,11 @@ func generateMAC(vmID string) string {
 // validateSnapshotIntegrity checks snapshot file hashes if expected values are provided.
 // This prevents loading tampered or corrupted snapshot files.
 func (i *Instance) validateSnapshotIntegrity() error {
-	// If no hashes are provided, skip validation (allow unverified snapshots)
+	// If no hashes are provided, skip validation (allow unverified snapshots).
 	if i.snapInteg.ExpectedMemHash == "" && i.snapInteg.ExpectedStateHash == "" {
 		return nil
 	}
 
-	// Validate memory file hash
 	if i.snapInteg.ExpectedMemHash != "" {
 		memHash, err := computeFileHash(i.snapCfg.MemFilePath)
 		if err != nil {
@@ -90,7 +89,6 @@ func (i *Instance) validateSnapshotIntegrity() error {
 		}
 	}
 
-	// Validate state file hash
 	if i.snapInteg.ExpectedStateHash != "" {
 		stateHash, err := computeFileHash(i.snapCfg.StateFilePath)
 		if err != nil {
@@ -126,11 +124,9 @@ func guestKernelArgs(bootArgs, guestAgentPath string) string {
 		return bootArgs
 	}
 
-	// Properly parse kernel arguments to detect existing init= parameter
 	args := strings.Fields(bootArgs)
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "init=") {
-			// Don't allow overriding init= - this is a security boundary
 			return bootArgs
 		}
 	}
@@ -147,14 +143,13 @@ func (i *Instance) Configure(ctx context.Context) error {
 	}
 	i.state = StateConfiguring
 
-	// Generate random instance ID for host resource naming
 	var err error
 	i.InstanceID, err = generateInstanceID()
 	if err != nil {
+		i.state = StateCreated
 		return fmt.Errorf("generate instance ID: %w", err)
 	}
 
-	// Update TAP name to use instance ID for unpredictable naming
 	i.netCfg.TapName = uniqueTapNameWithInstanceID(i.InstanceID)
 
 	if err := i.cfg.Validate(); err != nil {
@@ -162,11 +157,9 @@ func (i *Instance) Configure(ctx context.Context) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Use rollback pattern to clean up on configuration failure
 	configured := false
 	defer func() {
 		if !configured {
-			// Rollback cleanups in reverse order
 			for j := len(i.cleanups) - 1; j >= 0; j-- {
 				if cleanupErr := i.cleanups[j](); cleanupErr != nil {
 					fmt.Printf("warning: rollback cleanup failed for vm %s: %v\n", i.ID, cleanupErr)
@@ -176,7 +169,6 @@ func (i *Instance) Configure(ctx context.Context) error {
 		}
 	}()
 
-	// 1. Provision host TAP network and firewall isolation
 	if err := SetupTAP(ctx, i.netCfg); err != nil {
 		i.state = StateCreated
 		return fmt.Errorf("setup tap: %w", err)
@@ -202,7 +194,6 @@ func (i *Instance) Configure(ctx context.Context) error {
 		return fmt.Errorf("parse host/gateway IP %q: invalid IP", i.netCfg.HostIP)
 	}
 
-	// 2. Build base Firecracker VM Configuration
 	fcConfig := fc.Config{
 		SocketPath: i.SocketPath,
 		Drives: []models.Drive{{
@@ -228,7 +219,6 @@ func (i *Instance) Configure(ctx context.Context) error {
 		VsockDevices: []fc.VsockDevice{{ID: "vsock0", CID: i.vsockCfg.GuestCID}},
 	}
 
-	// 3. Branching: Snapshot Resume vs. Full Boot Path
 	var opts []fc.Opt
 	if i.snapCfg.EnableResume {
 		if i.snapCfg.MemFilePath == "" || i.snapCfg.StateFilePath == "" {
@@ -236,21 +226,17 @@ func (i *Instance) Configure(ctx context.Context) error {
 			return fmt.Errorf("snapshot restore enabled but snapshot paths are missing")
 		}
 
-		// Validate snapshot file integrity if hashes are provided
 		if err := i.validateSnapshotIntegrity(); err != nil {
 			i.state = StateCreated
 			return fmt.Errorf("validate snapshot integrity: %w", err)
 		}
 
-		// Inject Snapshot Opt into Firecracker SDK
 		opts = append(opts, fc.WithSnapshot(i.snapCfg.MemFilePath, i.snapCfg.StateFilePath))
 	} else {
-		// Kernel path and boot parameters are only needed for standard cold boot
 		fcConfig.KernelImagePath = i.cfg.KernelPath
 		fcConfig.KernelArgs = guestKernelArgs(i.cfg.BootArgs, i.cfg.GuestAgentPath)
 	}
 
-	// 4. Instantiate Machine
 	machine, err := fc.NewMachine(ctx, fcConfig, opts...)
 	if err != nil {
 		i.state = StateCreated
@@ -274,7 +260,6 @@ func (i *Instance) Start(ctx context.Context) error {
 		return fmt.Errorf("machine not configured")
 	}
 
-	// Resume from snapshot or execute standard start
 	if i.snapCfg.EnableResume {
 		if err := i.machine.ResumeVM(ctx); err != nil {
 			return fmt.Errorf("resume microvm snapshot: %w", err)
@@ -294,9 +279,7 @@ func (i *Instance) Stop(ctx context.Context) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	// Allow Stop to be called from Running or Configured state
-	if i.state != StateRunning && i.state != StateConfigured {
-		// Already stopped or stopping - return nil for idempotency
+	if i.state != StateRunning && i.state != StateConfigured && i.state != StateCleanupFailed {
 		return nil
 	}
 	i.state = StateStopping
@@ -306,27 +289,32 @@ func (i *Instance) Stop(ctx context.Context) error {
 	if i.machine != nil {
 		if err := i.machine.StopVMM(); err != nil {
 			errs = append(errs, fmt.Errorf("stop vmm: %w", err))
+		} else {
+			i.machine = nil
 		}
 	}
 
-	// Execute cleanups in reverse order and collect all errors
+	// Keep failed cleanup functions so a subsequent Stop call can retry them.
+	remainingCleanups := make([]func() error, 0, len(i.cleanups))
 	for j := len(i.cleanups) - 1; j >= 0; j-- {
 		if err := i.cleanups[j](); err != nil {
 			errs = append(errs, fmt.Errorf("cleanup step %d: %w", j, err))
+			remainingCleanups = append(remainingCleanups, i.cleanups[j])
+		}
+	}
+	i.cleanups = remainingCleanups
+
+	if len(i.cleanups) == 0 {
+		if err := os.Remove(i.SocketPath); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("remove socket: %w", err))
 		}
 	}
 
-	// Clean up socket file
-	if err := os.Remove(i.SocketPath); err != nil && !os.IsNotExist(err) {
-		errs = append(errs, fmt.Errorf("remove socket: %w", err))
-	}
-
-	// Clear cleanups after execution
-	i.cleanups = nil
-	i.state = StateStopped
-
-	if len(errs) > 0 {
+	if len(errs) > 0 || len(i.cleanups) > 0 || i.machine != nil {
+		i.state = StateCleanupFailed
 		return fmt.Errorf("stop instance %s: %w", i.ID, errors.Join(errs...))
 	}
+
+	i.state = StateStopped
 	return nil
 }
