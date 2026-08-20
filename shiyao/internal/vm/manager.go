@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,12 +85,10 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check for existing VM under the lock to prevent TOCTOU race
 	if _, exists := m.instances[vmID]; exists {
 		return nil, fmt.Errorf("vm %s already exists", vmID)
 	}
 
-	// Atomically allocate subnet and CID from pool while holding manager lock
 	netCfg, cid, err := m.ipam.Allocate(vmID, m.netCfg)
 	if err != nil {
 		return nil, fmt.Errorf("allocate resources for vm %s: %w", vmID, err)
@@ -130,13 +127,10 @@ func (m *Manager) DestroyVM(ctx context.Context, vmID string) error {
 		return fmt.Errorf("vm %s not found", vmID)
 	}
 
-	// Perform physical stop and teardown outside manager lock. Stop transitions
-	// the instance to StateStopping, preventing concurrent lifecycle actions.
 	if err := inst.Stop(ctx); err != nil {
 		return fmt.Errorf("stop vm %s: %w", vmID, err)
 	}
 
-	// Release IPAM resources only after every cleanup step has succeeded.
 	m.mu.Lock()
 	delete(m.instances, vmID)
 	m.mu.Unlock()
