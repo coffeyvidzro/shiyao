@@ -9,7 +9,7 @@ import (
 
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	sessionpkg "github.com/coffeyvidzro/shiyao/internal/identity/session"
-	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
+	apperrors "github.com/shiyao/shiyao/pkg/errors"
 	"github.com/shiyao/shiyao/pkg/httputil"
 )
 
