@@ -13,13 +13,11 @@ import (
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 )
 
-// Handler handles authentication HTTP requests.
 type Handler struct {
 	service        *Service
 	sessionService *sessionpkg.Service
 }
 
-// NewHandler creates a new authentication handler.
 func NewHandler(service *Service, sessionService *sessionpkg.Service) *Handler {
 	return &Handler{
 		service:        service,
@@ -27,29 +25,6 @@ func NewHandler(service *Service, sessionService *sessionpkg.Service) *Handler {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Start authentication
-// -----------------------------------------------------------------------------
-
-// Start begins an authentication transaction.
-//
-// POST /auth/start
-//
-// Request:
-//
-//	{
-//	    "email": "user@example.com"
-//	}
-//
-// Response:
-//
-//	{
-//	    "success": true,
-//	    "data": {
-//	        "transaction_id": "...",
-//	        "methods": ["password", "otp"]
-//	    }
-//	}
 func (h *Handler) Start(c *gin.Context) {
 	var req startRequest
 
@@ -72,27 +47,12 @@ func (h *Handler) Start(c *gin.Context) {
 		return
 	}
 
-	// Do not expose database fields from AuthTransaction directly.
 	httputil.OK(c, startResponse{
 		TransactionID: transaction.ID,
 		Methods:       authenticationMethods(transaction),
 	})
 }
 
-// -----------------------------------------------------------------------------
-// Password login
-// -----------------------------------------------------------------------------
-
-// LoginWithPassword authenticates a user using their password.
-//
-// POST /auth/password
-//
-// Request:
-//
-//	{
-//	    "transaction_id": "...",
-//	    "password": "password"
-//	}
 func (h *Handler) LoginWithPassword(c *gin.Context) {
 	var req passwordLoginRequest
 
@@ -146,19 +106,6 @@ func (h *Handler) LoginWithPassword(c *gin.Context) {
 	})
 }
 
-// -----------------------------------------------------------------------------
-// OTP
-// -----------------------------------------------------------------------------
-
-// SendOTP sends a one-time authentication code.
-//
-// POST /auth/otp/send
-//
-// Request:
-//
-//	{
-//	    "transaction_id": "..."
-//	}
 func (h *Handler) SendOTP(c *gin.Context) {
 	var req sendOTPRequest
 
@@ -193,16 +140,6 @@ func (h *Handler) SendOTP(c *gin.Context) {
 	})
 }
 
-// VerifyOTP verifies a one-time authentication code.
-//
-// POST /auth/otp/verify
-//
-// Request:
-//
-//	{
-//	    "transaction_id": "...",
-//	    "code": "123456"
-//	}
 func (h *Handler) VerifyOTP(c *gin.Context) {
 	var req verifyOTPRequest
 
@@ -258,16 +195,6 @@ func (h *Handler) VerifyOTP(c *gin.Context) {
 	})
 }
 
-// -----------------------------------------------------------------------------
-// Password management
-// -----------------------------------------------------------------------------
-
-// SetPassword sets a password for the authenticated user.
-//
-// POST /auth/password/set
-//
-// This endpoint assumes authentication middleware has placed the user ID
-// into the Gin context.
 func (h *Handler) SetPassword(c *gin.Context) {
 	var req setPasswordRequest
 
@@ -300,10 +227,6 @@ func (h *Handler) SetPassword(c *gin.Context) {
 	})
 }
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-
 func parseUUID(value string) (uuid.UUID, error) {
 	return uuid.Parse(strings.TrimSpace(value))
 }
@@ -328,35 +251,15 @@ func userAgent(c *gin.Context) *string {
 	return &value
 }
 
-// -----------------------------------------------------------------------------
-// Authentication method helpers
-// -----------------------------------------------------------------------------
-
 func authenticationMethods(
 	transaction sqlc.AuthTransaction,
 ) []string {
-	// This should eventually be determined by the transaction state created
-	// by Service.Start().
-	//
-	// Keep this helper here until your exact auth_transactions schema/model
-	// is finalized.
-	//
-	// For now, password + otp are the supported authentication methods.
 
 	return []string{
 		"password",
 		"otp",
 	}
 }
-
-// -----------------------------------------------------------------------------
-// Temporary API errors
-// -----------------------------------------------------------------------------
-
-// These helpers assume your pkg/errors package exposes AppError.
-//
-// If your existing package already has equivalent constructors, use those
-// instead.
 
 func NewBadRequestError(message string) error {
 	return apperrors.NewBadRequest(message)

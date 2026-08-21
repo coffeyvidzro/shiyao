@@ -33,15 +33,6 @@ func NewService(repo *Repository) *Service {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Authentication
-// -----------------------------------------------------------------------------
-
-// Start begins an authentication transaction for an email address.
-//
-// The transaction is intentionally separate from the eventual session.
-// It represents the short-lived process of proving that the person controls
-// the requested authentication method.
 func (s *Service) Start(
 	ctx context.Context,
 	email string,
@@ -54,25 +45,9 @@ func (s *Service) Start(
 
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		// Do not leak whether an account exists.
-		//
-		// The exact handling of sql.ErrNoRows should be added here depending
-		// on your sqlc error behavior.
-		//
-		// For now, return the database error.
 		return sqlc.AuthTransaction{}, err
 	}
 
-	// Your generated CreateAuthTransactionParams may have slightly different
-	// fields depending on your migration/query definitions.
-	//
-	// The transaction should contain:
-	//   - email / identifier
-	//   - user ID
-	//   - expiration
-	//   - initial state
-	//
-	// Adjust these fields to match the generated sqlc struct.
 	transaction, err := s.repo.CreateAuthTransaction(
 		ctx,
 		sqlc.CreateAuthTransactionParams{
@@ -88,14 +63,6 @@ func (s *Service) Start(
 	return transaction, nil
 }
 
-// -----------------------------------------------------------------------------
-// Password authentication
-// -----------------------------------------------------------------------------
-
-// LoginWithPassword verifies a user's password and authenticates the
-// authentication transaction.
-//
-// The transaction must already have been created by Start.
 func (s *Service) LoginWithPassword(
 	ctx context.Context,
 	transactionID uuid.UUID,
@@ -146,7 +113,6 @@ func (s *Service) LoginWithPassword(
 	return user, nil
 }
 
-// SetPassword sets the password for an authenticated user.
 func (s *Service) SetPassword(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -170,16 +136,6 @@ func (s *Service) SetPassword(
 	)
 }
 
-// -----------------------------------------------------------------------------
-// One-time codes
-// -----------------------------------------------------------------------------
-
-// SendOTP creates a one-time authentication challenge.
-//
-// This method creates the challenge. The actual email/SMS delivery should
-// happen outside the repository.
-//
-// You can later inject a Mailer into Service.
 func (s *Service) SendOTP(
 	ctx context.Context,
 	transactionID uuid.UUID,
@@ -221,20 +177,9 @@ func (s *Service) SendOTP(
 
 	_ = challenge
 
-	// IMPORTANT:
-	//
-	// Do not return `code` from the production HTTP handler.
-	//
-	// This return value is useful while developing/testing the auth flow.
-	// Once you add a Mailer, this becomes:
-	//
-	//     s.mailer.SendLoginCode(ctx, transaction.Identifier, code)
-	//
-	// and this method should return only an error.
 	return code, nil
 }
 
-// VerifyOTP verifies the current one-time code.
 func (s *Service) VerifyOTP(
 	ctx context.Context,
 	transactionID uuid.UUID,
@@ -304,10 +249,6 @@ func (s *Service) VerifyOTP(
 			return sqlc.User{}, err
 		}
 	} else {
-		// New user.
-		//
-		// This is where you create the user after successfully proving
-		// ownership of the email address.
 		user, err = s.repo.CreateUser(
 			ctx,
 			sqlc.CreateUserParams{
@@ -341,10 +282,6 @@ func (s *Service) VerifyOTP(
 
 	return user, nil
 }
-
-// -----------------------------------------------------------------------------
-// OAuth
-// -----------------------------------------------------------------------------
 
 func (s *Service) GetOAuthAccount(
 	ctx context.Context,
@@ -416,10 +353,6 @@ func (s *Service) DeleteOAuthAccount(
 	)
 }
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-
 func timePtr(value time.Time) *time.Time {
 	return &value
 }
@@ -473,10 +406,6 @@ func hashPassword(password string) (string, error) {
 		return "", err
 	}
 
-	// NOTE:
-	// This is a placeholder configuration. In production, tune Argon2id
-	// parameters according to your server hardware and security requirements.
-
 	salt := make([]byte, 16)
 
 	if _, err := rand.Read(salt); err != nil {
@@ -500,10 +429,6 @@ func hashPassword(password string) (string, error) {
 }
 
 func verifyPassword(password string, encoded string) bool {
-	// This should parse the encoded Argon2id string and recompute the hash.
-	//
-	// Keep this helper isolated so the password implementation can later
-	// be replaced with a dedicated password hasher.
 
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 5 {
