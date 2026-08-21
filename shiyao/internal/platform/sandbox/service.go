@@ -6,18 +6,23 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/uuid"
+
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/vsock"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
-	"github.com/google/uuid"
 )
 
 type Service struct {
-	repo *Repository
+	repo     *Repository
+	vmManager VMManager
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, vmManager VMManager) *Service {
+	return &Service{
+		repo:      repo,
+		vmManager: vmManager,
+	}
 }
 
 func (s *Service) List(
