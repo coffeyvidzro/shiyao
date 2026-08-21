@@ -5,9 +5,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
+	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 )
 
@@ -16,27 +18,25 @@ const bearerScheme = "Bearer"
 type Auth struct {
 	sessions *session.Service
 	pat      authn.Resolver
+	users    *users.Service
 }
 
-func NewAuth(sessions *session.Service, patResolver authn.Resolver) *Auth {
-	return &Auth{sessions: sessions, pat: patResolver}
+func NewAuth(sessions *session.Service, patResolver authn.Resolver, userService *users.Service) *Auth {
+	return &Auth{sessions: sessions, pat: patResolver, users: userService}
 }
 
 func (a *Auth) Handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if principal, ok := a.resolveBearer(c); ok {
-			setPrincipal(c, principal)
-			c.Next()
+		principal, ok := a.resolveBearer(c)
+		if !ok {
+			principal, ok = a.resolveSession(c)
+		}
+		if !ok || !a.userEnabled(c, principal) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apperrors.NewUnauthorized("authentication required"))
 			return
 		}
-
-		if principal, ok := a.resolveSession(c); ok {
-			setPrincipal(c, principal)
-			c.Next()
-			return
-		}
-
-		c.AbortWithStatusJSON(http.StatusUnauthorized, apperrors.NewUnauthorized("authentication required"))
+		setPrincipal(c, principal)
+		c.Next()
 	}
 }
 
@@ -83,17 +83,23 @@ func (a *Auth) resolveSession(c *gin.Context) (authn.Principal, bool) {
 
 	return authn.Principal{
 		Subject: authn.Subject{ID: sess.UserID, Type: authn.SubjectUser},
-		Credential: authn.Credential{ID: sess.ID, Type: authn.CredentialSession},
+		Credential: authn.Credential{
+			ID:   sess.ID,
+			Type: authn.CredentialSession,
+		},
 		Assurance: authn.AssuranceUnknown,
 	}, true
+}
+
+func (a *Auth) userEnabled(c *gin.Context, principal authn.Principal) bool {
+	if a.users == nil || principal.Subject.Type != authn.SubjectUser || principal.Subject.ID == uuid.Nil {
+		return false
+	}
+	_, err := a.users.GetMe(c.Request.Context(), principal.Subject.ID)
+	return err == nil
 }
 
 func setPrincipal(c *gin.Context, principal authn.Principal) {
 	ctx := authn.WithPrincipal(c.Request.Context(), principal)
 	c.Request = c.Request.WithContext(ctx)
-
-	c.Set(session.ContextUserID, principal.Subject.ID)
-	if principal.Credential.Type == authn.CredentialSession {
-		c.Set(session.ContextSessionID, principal.Credential.ID)
-	}
 }
