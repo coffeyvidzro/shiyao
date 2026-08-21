@@ -22,12 +22,12 @@ type repository interface {
 }
 
 type Service struct {
-	repo      repository
-	vmManager VMManager
+	repo       repository
+	dispatcher LifecycleDispatcher
 }
 
-func NewService(repo repository, vmManager VMManager) *Service {
-	return &Service{repo: repo, vmManager: vmManager}
+func NewService(repo repository, dispatcher LifecycleDispatcher) *Service {
+	return &Service{repo: repo, dispatcher: dispatcher}
 }
 
 func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]sqlc.Sandbox, error) {
@@ -59,7 +59,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req CreateReques
 	if userID == uuid.Nil {
 		return sqlc.Sandbox{}, apperrors.NewUnauthorized("authentication required")
 	}
-	if s.vmManager == nil {
+	if s.dispatcher == nil {
 		return sqlc.Sandbox{}, apperrors.NewServiceUnavailable("sandbox execution is unavailable", nil)
 	}
 
@@ -83,17 +83,13 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req CreateReques
 		return sqlc.Sandbox{}, err
 	}
 
-	if err := s.vmManager.ProvisionVM(ctx, sandbox.VmID); err != nil {
+	if err := s.dispatcher.DispatchCreate(ctx, LifecycleEvent{SandboxID: sandbox.ID, UserID: userID, VMID: sandbox.VmID}); err != nil {
 		if _, statusErr := s.repo.UpdateStatus(ctx, sandbox.ID, "failed"); statusErr != nil {
 			return sandbox, apperrors.NewInternal("sandbox provisioning failed and status update failed", fmt.Errorf("provision: %w; status update: %v", err, statusErr))
 		}
 		return sandbox, apperrors.NewInternal("sandbox provisioning failed", err)
 	}
 
-	sandbox, err = s.repo.UpdateStatus(ctx, sandbox.ID, "running")
-	if err != nil {
-		return sandbox, apperrors.NewInternal("sandbox started but status update failed", err)
-	}
 	return sandbox, nil
 }
 
@@ -101,7 +97,7 @@ func (s *Service) Delete(ctx context.Context, userID, sandboxID uuid.UUID) error
 	if userID == uuid.Nil {
 		return apperrors.NewUnauthorized("authentication required")
 	}
-	if s.vmManager == nil {
+	if s.dispatcher == nil {
 		return apperrors.NewServiceUnavailable("sandbox execution is unavailable", nil)
 	}
 
@@ -110,19 +106,17 @@ func (s *Service) Delete(ctx context.Context, userID, sandboxID uuid.UUID) error
 		return err
 	}
 
-	if err := s.vmManager.DestroyVM(ctx, sandbox.VmID); err != nil {
+	if _, err := s.repo.UpdateStatus(ctx, sandbox.ID, "stopping"); err != nil {
+		return apperrors.NewInternal("sandbox stop status update failed", err)
+	}
+
+	if err := s.dispatcher.DispatchDestroy(ctx, LifecycleEvent{SandboxID: sandbox.ID, UserID: userID, VMID: sandbox.VmID}); err != nil {
 		if _, statusErr := s.repo.UpdateStatus(ctx, sandbox.ID, "cleanup_failed"); statusErr != nil {
 			return apperrors.NewInternal("sandbox cleanup failed and status update failed", fmt.Errorf("destroy: %w; status update: %v", err, statusErr))
 		}
 		return apperrors.NewInternal("sandbox cleanup failed", err)
 	}
 
-	if _, err := s.repo.UpdateStatus(ctx, sandbox.ID, "stopped"); err != nil {
-		return apperrors.NewInternal("sandbox stopped but status update failed", err)
-	}
-	if err := s.repo.Delete(ctx, sandbox.ID); err != nil {
-		return apperrors.NewInternal("sandbox stopped but database cleanup failed", err)
-	}
 	return nil
 }
 

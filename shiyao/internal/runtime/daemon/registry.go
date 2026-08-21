@@ -7,17 +7,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	adapter "github.com/coffeyvidzro/shiyao/internal/adapters/nats"
 	"github.com/coffeyvidzro/shiyao/internal/config"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
 	"github.com/coffeyvidzro/shiyao/internal/identity/pat"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
-	"github.com/coffeyvidzro/shiyao/internal/network"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
+	"github.com/coffeyvidzro/shiyao/internal/runtime/controlplane"
 	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
-	"github.com/coffeyvidzro/shiyao/internal/vmm"
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -25,6 +24,7 @@ type Registry struct {
 	Config      config.Config
 	DB          *pgxpool.Pool
 	RedisClient *redis.Client
+	NATSClient  *adapter.Client
 	Router      *gin.Engine
 	Modules     Modules
 }
@@ -34,8 +34,9 @@ func New(
 	cfg config.Config,
 	db *pgxpool.Pool,
 	redisClient *redis.Client,
+	natsClient *adapter.Client,
 ) (*Registry, error) {
-	modules, err := NewModules(ctx, cfg, db, redisClient)
+	modules, err := NewModules(ctx, cfg, db, redisClient, natsClient)
 	if err != nil {
 		return nil, fmt.Errorf("initialize modules: %w", err)
 	}
@@ -54,6 +55,7 @@ func New(
 		Config:      cfg,
 		DB:          db,
 		RedisClient: redisClient,
+		NATSClient:  natsClient,
 		Router:      router,
 		Modules:     modules,
 	}, nil
@@ -64,6 +66,7 @@ func NewModules(
 	cfg config.Config,
 	db *pgxpool.Pool,
 	redisClient *redis.Client,
+	natsClient *adapter.Client,
 ) (Modules, error) {
 	queries := sqlc.New(db)
 
@@ -79,30 +82,11 @@ func NewModules(
 	patRepository := pat.NewRepository(queries)
 	patService := pat.NewService(patRepository)
 
-	vmmConfig := vmm.Config{
-		KernelPath:     cfg.VMMKernelPath,
-		RootfsPath:     cfg.VMMRootfsPath,
-		VCPUCount:      cfg.VMMVCPUCount,
-		MemSizeMB:      cfg.VMMMemoryMB,
-		BootArgs:       cfg.VMMBootArgs,
-		GuestAgentPath: cfg.VMMGuestAgentPath,
-	}
-	if err := vmmConfig.Validate(); err != nil {
-		return Modules{}, fmt.Errorf("validate vmm config: %w", err)
-	}
-
-	networkConfig := network.DefaultConfig("")
-	networkConfig.UplinkInterface = cfg.VMMUplinkInterface
-
-	vmmManager := vmm.NewManager(
-		vmmConfig,
-		networkConfig,
-		vsock.Config{},
-		vmm.SnapshotConfig{},
-	)
+	publisher := adapter.NewPublisher(natsClient)
+	sandboxDispatcher := controlplane.NewSandboxDispatcher(publisher)
 
 	sandboxRepository := sandbox.NewRepository(queries)
-	sandboxService := sandbox.NewService(sandboxRepository, newVMManager(vmmManager))
+	sandboxService := sandbox.NewService(sandboxRepository, sandboxDispatcher)
 
 	return Modules{
 		Auth: AuthModule{
@@ -129,7 +113,6 @@ func NewModules(
 			Repository: sandboxRepository,
 			Service:    sandboxService,
 			Handler:    sandbox.NewHandler(sandboxService),
-			VMM:        vmmManager,
 		},
 	}, nil
 }
@@ -137,6 +120,10 @@ func NewModules(
 func (r *Registry) Close() {
 	if r.RedisClient != nil {
 		r.RedisClient.Close()
+	}
+
+	if r.NATSClient != nil {
+		r.NATSClient.Close()
 	}
 
 	if r.DB != nil {

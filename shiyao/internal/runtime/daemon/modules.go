@@ -6,7 +6,6 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
-	"github.com/coffeyvidzro/shiyao/internal/vmm"
 )
 
 type Modules struct {
@@ -45,5 +44,4 @@ type SandboxModule struct {
 	Repository *sandbox.Repository
 	Service    *sandbox.Service
 	Handler    *sandbox.Handler
-	VMM        *vmm.Manager
 }
