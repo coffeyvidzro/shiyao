@@ -14,7 +14,6 @@ import (
 
 var ErrBackpressure = errors.New("vmm admission limit reached")
 
-// ManagerLimits bounds resident VMs and expensive host-side provisioning work.
 type ManagerLimits struct {
 	MaxVMs                 int
 	MaxConcurrentProvision int
@@ -71,21 +70,18 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 	if _, exists := m.instances[vmID]; exists {
 		return nil, fmt.Errorf("vm %s already exists", vmID)
 	}
-	netCfg, cid, err := m.ipam.Allocate(vmID, m.netCfg)
+	allocation, err := network.Acquire(vmID, m.netCfg, m.ipam)
 	if err != nil {
 		return nil, fmt.Errorf("allocate resources for vm %s: %w", vmID, err)
 	}
 	vsockCfg := m.vsockCfg
-	vsockCfg.GuestCID = cid
+	vsockCfg.GuestCID = allocation.CID()
 	socketPath := filepath.Join(os.TempDir(), fmt.Sprintf("firecracker-%s.sock", vmID))
-	inst := NewInstance(vmID, socketPath, m.baseCfg, netCfg, vsockCfg, m.snapCfg)
+	inst := NewInstance(vmID, socketPath, m.baseCfg, allocation, vsockCfg, m.snapCfg)
 	m.instances[vmID] = inst
 	return inst, nil
 }
 
-// ProvisionVM performs configuration and boot under a bounded admission gate.
-// It fails fast when the host is saturated rather than accumulating unbounded
-// queued TAP, nftables, Firecracker, and snapshot operations.
 func (m *Manager) ProvisionVM(ctx context.Context, vmID string) (*Instance, error) {
 	select {
 	case m.provision <- struct{}{}:
@@ -101,24 +97,31 @@ func (m *Manager) ProvisionVM(ctx context.Context, vmID string) (*Instance, erro
 		return nil, err
 	}
 	if err := inst.Configure(ctx); err != nil {
-		m.removeFailedVM(vmID, inst)
+		if cleanupErr := m.removeFailedVM(ctx, vmID, inst); cleanupErr != nil {
+			return nil, errors.Join(fmt.Errorf("configure vm %s: %w", vmID, err), fmt.Errorf("cleanup vm %s: %w", vmID, cleanupErr))
+		}
 		return nil, fmt.Errorf("configure vm %s: %w", vmID, err)
 	}
 	if err := inst.Start(ctx); err != nil {
-		_ = inst.Stop(ctx)
-		m.removeFailedVM(vmID, inst)
+		cleanupErr := m.removeFailedVM(ctx, vmID, inst)
+		if cleanupErr != nil {
+			return nil, errors.Join(fmt.Errorf("start vm %s: %w", vmID, err), fmt.Errorf("cleanup vm %s: %w", vmID, cleanupErr))
+		}
 		return nil, fmt.Errorf("start vm %s: %w", vmID, err)
 	}
 	return inst, nil
 }
 
-func (m *Manager) removeFailedVM(vmID string, inst *Instance) {
+func (m *Manager) removeFailedVM(ctx context.Context, vmID string, inst *Instance) error {
+	if err := inst.Stop(ctx); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	if m.instances[vmID] == inst {
 		delete(m.instances, vmID)
 	}
 	m.mu.Unlock()
-	m.ipam.Release(inst.netCfg.GuestIP, inst.vsockCfg.GuestCID)
+	return nil
 }
 
 func (m *Manager) DestroyVM(ctx context.Context, vmID string) error {
@@ -132,9 +135,10 @@ func (m *Manager) DestroyVM(ctx context.Context, vmID string) error {
 		return fmt.Errorf("stop vm %s: %w", vmID, err)
 	}
 	m.mu.Lock()
-	delete(m.instances, vmID)
+	if m.instances[vmID] == inst {
+		delete(m.instances, vmID)
+	}
 	m.mu.Unlock()
-	m.ipam.Release(inst.netCfg.GuestIP, inst.vsockCfg.GuestCID)
 	return nil
 }
 

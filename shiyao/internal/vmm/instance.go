@@ -17,26 +17,32 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/vsock"
 )
 
+type networkLease interface {
+	Config() network.Config
+	CID() uint32
+	Setup(context.Context) error
+	Release(context.Context) error
+}
+
 type Instance struct {
 	mu         sync.Mutex
 	ID         string
 	InstanceID string
 	SocketPath string
 	cfg        Config
-	netCfg     network.Config
+	network    networkLease
 	vsockCfg   vsock.Config
 	snapCfg    SnapshotConfig
 	snapInteg  SnapshotIntegrity
 	machine    *fc.Machine
-	cleanups   []func() error
 	state      State
 }
 
-func NewInstance(id, socketPath string, cfg Config, netCfg network.Config, vsockCfg vsock.Config, snapCfg SnapshotConfig) *Instance {
-	return &Instance{ID: id, SocketPath: socketPath, cfg: cfg, netCfg: netCfg, vsockCfg: vsockCfg, snapCfg: snapCfg, state: StateCreated}
+func NewInstance(id, socketPath string, cfg Config, allocation networkLease, vsockCfg vsock.Config, snapCfg SnapshotConfig) *Instance {
+	return &Instance{ID: id, SocketPath: socketPath, cfg: cfg, network: allocation, vsockCfg: vsockCfg, snapCfg: snapCfg, state: StateCreated}
 }
 
-func (i *Instance) Configure(ctx context.Context) error {
+func (i *Instance) Configure(ctx context.Context) (retErr error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.state != StateCreated {
@@ -53,55 +59,50 @@ func (i *Instance) Configure(ctx context.Context) error {
 		i.state = StateCreated
 		return fmt.Errorf("invalid config: %w", err)
 	}
-	if err := i.netCfg.Validate(); err != nil {
+	netCfg := i.network.Config()
+	if err := netCfg.Validate(); err != nil {
 		i.state = StateCreated
 		return fmt.Errorf("invalid network config: %w", err)
 	}
+	if err := i.network.Setup(ctx); err != nil {
+		i.state = StateCreated
+		return fmt.Errorf("setup network resources: %w", err)
+	}
 	configured := false
 	defer func() {
-		if !configured {
-			for j := len(i.cleanups) - 1; j >= 0; j-- {
-				_ = i.cleanups[j]()
-			}
-			i.cleanups = nil
+		if configured {
+			return
 		}
+		cleanupErr := i.network.Release(context.Background())
+		if cleanupErr != nil {
+			i.state = StateCleanupFailed
+			retErr = errors.Join(retErr, fmt.Errorf("cleanup network resources after configure failure: %w", cleanupErr))
+			return
+		}
+		i.state = StateCreated
 	}()
-	if err := network.SetupTAP(ctx, i.netCfg); err != nil {
-		i.state = StateCreated
-		return fmt.Errorf("setup tap: %w", err)
-	}
-	i.cleanups = append(i.cleanups, func() error { return network.CleanupTAP(ctx, i.netCfg.TapName) })
-	if err := network.SetupFirewall(ctx, i.netCfg); err != nil {
-		i.state = StateCreated
-		return fmt.Errorf("setup firewall: %w", err)
-	}
-	i.cleanups = append(i.cleanups, func() error { return network.CleanupFirewall(ctx, i.netCfg) })
-	guestIP, guestNetwork, err := net.ParseCIDR(i.netCfg.GuestIP)
+	guestIP, guestNetwork, err := net.ParseCIDR(netCfg.GuestIP)
 	if err != nil {
-		i.state = StateCreated
-		return fmt.Errorf("parse guest IP %q: %w", i.netCfg.GuestIP, err)
+		return fmt.Errorf("parse guest IP %q: %w", netCfg.GuestIP, err)
 	}
 	guestNetwork.IP = guestIP
-	gatewayIP := net.ParseIP(i.netCfg.HostIP)
+	gatewayIP := net.ParseIP(netCfg.HostIP)
 	if gatewayIP == nil {
-		i.state = StateCreated
-		return fmt.Errorf("parse host/gateway IP %q: invalid IP", i.netCfg.HostIP)
+		return fmt.Errorf("parse host/gateway IP %q: invalid IP", netCfg.HostIP)
 	}
 	fcConfig := fc.Config{
 		SocketPath:        i.SocketPath,
 		Drives:            []models.Drive{{DriveID: fc.String("rootfs"), PathOnHost: fc.String(i.cfg.RootfsPath), IsRootDevice: fc.Bool(true), IsReadOnly: fc.Bool(true)}},
 		MachineCfg:        models.MachineConfiguration{VcpuCount: fc.Int64(int64(i.cfg.VCPUCount)), MemSizeMib: fc.Int64(int64(i.cfg.MemSizeMB))},
-		NetworkInterfaces: []fc.NetworkInterface{{StaticConfiguration: &fc.StaticNetworkConfiguration{HostDevName: i.netCfg.TapName, MacAddress: generateMAC(i.ID), IPConfiguration: &fc.IPConfiguration{IPAddr: *guestNetwork, Gateway: gatewayIP}}}},
+		NetworkInterfaces: []fc.NetworkInterface{{StaticConfiguration: &fc.StaticNetworkConfiguration{HostDevName: netCfg.TapName, MacAddress: generateMAC(i.ID), IPConfiguration: &fc.IPConfiguration{IPAddr: *guestNetwork, Gateway: gatewayIP}}}},
 		VsockDevices:      []fc.VsockDevice{{ID: "vsock0", CID: i.vsockCfg.GuestCID}},
 	}
 	var opts []fc.Opt
 	if i.snapCfg.EnableResume {
 		if i.snapCfg.MemFilePath == "" || i.snapCfg.StateFilePath == "" {
-			i.state = StateCreated
 			return fmt.Errorf("snapshot restore enabled but snapshot paths are missing")
 		}
 		if err := i.validateSnapshotIntegrity(); err != nil {
-			i.state = StateCreated
 			return fmt.Errorf("validate snapshot integrity: %w", err)
 		}
 		opts = append(opts, fc.WithSnapshot(i.snapCfg.MemFilePath, i.snapCfg.StateFilePath))
@@ -109,14 +110,12 @@ func (i *Instance) Configure(ctx context.Context) error {
 		fcConfig.KernelImagePath = i.cfg.KernelPath
 		kernelArgs, err := guestKernelArgs(i.cfg.BootArgs, i.cfg.GuestAgentPath)
 		if err != nil {
-			i.state = StateCreated
 			return err
 		}
 		fcConfig.KernelArgs = kernelArgs
 	}
 	machine, err := fc.NewMachine(ctx, fcConfig, opts...)
 	if err != nil {
-		i.state = StateCreated
 		return fmt.Errorf("create firecracker machine: %w", err)
 	}
 	i.machine = machine
@@ -160,20 +159,17 @@ func (i *Instance) Stop(ctx context.Context) error {
 			i.machine = nil
 		}
 	}
-	remaining := make([]func() error, 0, len(i.cleanups))
-	for j := len(i.cleanups) - 1; j >= 0; j-- {
-		if err := i.cleanups[j](); err != nil {
-			errs = append(errs, fmt.Errorf("cleanup step %d: %w", j, err))
-			remaining = append(remaining, i.cleanups[j])
+	if i.network != nil {
+		if err := i.network.Release(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("release network resources: %w", err))
 		}
 	}
-	i.cleanups = remaining
-	if len(i.cleanups) == 0 {
+	if i.machine == nil {
 		if err := os.Remove(i.SocketPath); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, fmt.Errorf("remove socket: %w", err))
 		}
 	}
-	if len(errs) > 0 || len(i.cleanups) > 0 || i.machine != nil {
+	if len(errs) > 0 || i.machine != nil {
 		i.state = StateCleanupFailed
 		return fmt.Errorf("stop instance %s: %w", i.ID, errors.Join(errs...))
 	}
