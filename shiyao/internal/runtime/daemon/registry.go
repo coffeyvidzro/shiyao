@@ -11,9 +11,11 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/config"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
+	"github.com/coffeyvidzro/shiyao/internal/identity/pat"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
+	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
 )
 
 type Registry struct {
@@ -66,6 +68,9 @@ func NewModules(
 	authRepository := auth.NewRepository(queries)
 	authService := auth.NewService(authRepository, sessionService)
 
+	patRepository := pat.NewRepository(queries)
+	patService := pat.NewService(patRepository)
+
 	sandboxRepository := sandbox.NewRepository(queries)
 	sandboxService := sandbox.NewService(sandboxRepository)
 
@@ -74,6 +79,11 @@ func NewModules(
 			Repository: authRepository,
 			Service:    authService,
 			Handler:    auth.NewHandler(authService),
+		},
+		PAT: PATModule{
+			Repository: patRepository,
+			Service:    patService,
+			Handler:    pat.NewHandler(patService),
 		},
 		Session: SessionModule{
 			Repository: sessionRepository,
@@ -102,3 +112,5 @@ func (r *Registry) Close() {
 		r.DB.Close()
 	}
 }
+
+var _ = middleware.NewAuth
