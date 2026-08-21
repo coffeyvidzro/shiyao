@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/coffeyvidzro/shiyao/internal/network"
+	"github.com/coffeyvidzro/shiyao/internal/vsock"
 )
 
 type blockingNetworkLease struct {
