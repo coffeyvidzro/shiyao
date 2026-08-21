@@ -10,15 +10,15 @@ import (
 )
 
 type fakeNetworkLease struct {
-	cfg           network.Config
-	cid           uint32
-	setupErr      error
-	releaseErrs   []error
-	releaseCalls  int
+	cfg          network.Config
+	cid          uint32
+	setupErr     error
+	releaseErrs  []error
+	releaseCalls int
 }
 
-func (f *fakeNetworkLease) Config() network.Config { return f.cfg }
-func (f *fakeNetworkLease) CID() uint32            { return f.cid }
+func (f *fakeNetworkLease) Config() network.Config      { return f.cfg }
+func (f *fakeNetworkLease) CID() uint32                 { return f.cid }
 func (f *fakeNetworkLease) Setup(context.Context) error { return f.setupErr }
 func (f *fakeNetworkLease) Release(context.Context) error {
 	f.releaseCalls++
