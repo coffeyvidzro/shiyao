@@ -19,7 +19,7 @@ type blockingNetworkLease struct {
 }
 
 func (l *blockingNetworkLease) Config() network.Config { return l.cfg }
-func (l *blockingNetworkLease) CID() uint32             { return l.cid }
+func (l *blockingNetworkLease) CID() uint32            { return l.cid }
 
 func (l *blockingNetworkLease) Setup(context.Context) error {
 	l.setupOnce.Do(func() { close(l.setup) })

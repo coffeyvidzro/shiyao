@@ -16,8 +16,8 @@ type stopTestLease struct {
 	err      error
 }
 
-func (l *stopTestLease) Config() network.Config { return network.DefaultConfig("tap0") }
-func (l *stopTestLease) CID() uint32            { return 42 }
+func (l *stopTestLease) Config() network.Config      { return network.DefaultConfig("tap0") }
+func (l *stopTestLease) CID() uint32                 { return 42 }
 func (l *stopTestLease) Setup(context.Context) error { return nil }
 func (l *stopTestLease) Release(context.Context) error {
 	l.mu.Lock()
