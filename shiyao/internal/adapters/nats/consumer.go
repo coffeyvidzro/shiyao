@@ -2,56 +2,44 @@ package nats
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strings"
 
-	natsgo "github.com/nats-io/nats.go"
+	natsjs "github.com/nats-io/nats.go/jetstream"
 )
 
-type Handler[T any] func(context.Context, T) error
-
-type Subscription struct {
-	sub *natsgo.Subscription
+type ConsumerManager interface {
+	CreateOrUpdateConsumer(context.Context, string, natsjs.ConsumerConfig) (natsjs.Consumer, error)
 }
 
-func (s *Subscription) Unsubscribe() error {
-	if s == nil || s.sub == nil {
-		return nil
-	}
-	return s.sub.Unsubscribe()
+type ConsumerHandle interface {
+	Stop()
 }
 
-func SubscribeJSON[T any](client *Client, subject string, handler Handler[T]) (*Subscription, error) {
-	return QueueSubscribeJSON(client, subject, "", handler)
-}
-
-func QueueSubscribeJSON[T any](client *Client, subject, queue string, handler Handler[T]) (*Subscription, error) {
-	if client == nil || client.Conn() == nil {
-		return nil, fmt.Errorf("nats client is not configured")
+func (c *Client) CreateOrUpdateConsumer(ctx context.Context, stream string, config natsjs.ConsumerConfig) (natsjs.Consumer, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("JetStream consumer context is required")
 	}
-	if handler == nil {
-		return nil, fmt.Errorf("nats handler is required")
+	if c == nil || c.jetStream == nil {
+		return nil, ErrClientUnavailable
 	}
-
-	callback := func(msg *natsgo.Msg) {
-		var event T
-		if err := json.Unmarshal(msg.Data, &event); err != nil {
-			return
-		}
-		_ = handler(context.Background(), event)
+	stream = strings.TrimSpace(stream)
+	if stream == "" {
+		return nil, fmt.Errorf("JetStream stream name is required")
 	}
-
-	var (
-		sub *natsgo.Subscription
-		err error
-	)
-	if queue == "" {
-		sub, err = client.Conn().Subscribe(subject, callback)
-	} else {
-		sub, err = client.Conn().QueueSubscribe(subject, queue, callback)
+	if strings.TrimSpace(config.Durable) == "" && strings.TrimSpace(config.Name) == "" {
+		return nil, fmt.Errorf("JetStream consumer durable or name is required")
 	}
+	consumer, err := c.jetStream.CreateOrUpdateConsumer(ctx, stream, config)
 	if err != nil {
-		return nil, fmt.Errorf("subscribe %s: %w", subject, err)
+		return nil, fmt.Errorf("create or update consumer %q on %s: %w", consumerName(config), stream, err)
 	}
-	return &Subscription{sub: sub}, nil
+	return consumer, nil
+}
+
+func consumerName(config natsjs.ConsumerConfig) string {
+	if durable := strings.TrimSpace(config.Durable); durable != "" {
+		return durable
+	}
+	return strings.TrimSpace(config.Name)
 }

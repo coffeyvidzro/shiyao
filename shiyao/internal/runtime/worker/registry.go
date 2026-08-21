@@ -16,13 +16,13 @@ import (
 )
 
 type Registry struct {
-	Config        config.Config
-	DB            *pgxpool.Pool
-	NATS          *adapter.Client
-	Queries       *sqlc.Queries
-	Repository    *sandbox.Repository
-	VMM           *vmm.Manager
-	Subscriptions []*adapter.Subscription
+	Config     config.Config
+	DB         *pgxpool.Pool
+	NATS       *adapter.Client
+	Queries    *sqlc.Queries
+	Repository *sandbox.Repository
+	VMM        *vmm.Manager
+	Consumers  []adapter.ConsumerHandle
 }
 
 func New(ctx context.Context, cfg config.Config, db *pgxpool.Pool, natsClient *adapter.Client) (*Registry, error) {
@@ -66,11 +66,11 @@ func New(ctx context.Context, cfg config.Config, db *pgxpool.Pool, natsClient *a
 }
 
 func (r *Registry) Close() {
-	for _, sub := range r.Subscriptions {
-		_ = sub.Unsubscribe()
+	for _, consumer := range r.Consumers {
+		consumer.Stop()
 	}
 	if r.NATS != nil {
-		r.NATS.Close()
+		_ = r.NATS.Close()
 	}
 	if r.DB != nil {
 		r.DB.Close()

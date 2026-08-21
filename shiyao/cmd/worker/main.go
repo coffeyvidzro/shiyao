@@ -34,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect to nats: %v", err)
 	}
-	defer natsClient.Close()
+	defer func() { _ = natsClient.Close() }()
 
 	registry, err := worker.New(ctx, cfg, db, natsClient)
 	if err != nil {

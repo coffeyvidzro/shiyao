@@ -15,7 +15,6 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
-	"github.com/coffeyvidzro/shiyao/internal/runtime/controlplane"
 	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
 	"github.com/redis/go-redis/v9"
 )
@@ -82,8 +81,7 @@ func NewModules(
 	patRepository := pat.NewRepository(queries)
 	patService := pat.NewService(patRepository)
 
-	publisher := adapter.NewPublisher(natsClient)
-	sandboxDispatcher := controlplane.NewSandboxDispatcher(publisher)
+	sandboxDispatcher := newSandboxDispatcher(natsClient)
 
 	sandboxRepository := sandbox.NewRepository(queries)
 	sandboxService := sandbox.NewService(sandboxRepository, sandboxDispatcher)
@@ -123,7 +121,7 @@ func (r *Registry) Close() {
 	}
 
 	if r.NATSClient != nil {
-		r.NATSClient.Close()
+		_ = r.NATSClient.Close()
 	}
 
 	if r.DB != nil {
