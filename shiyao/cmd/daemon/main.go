@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	adapter "github.com/coffeyvidzro/shiyao/internal/adapters/nats"
 	"github.com/coffeyvidzro/shiyao/internal/adapters/postgres"
 	"github.com/coffeyvidzro/shiyao/internal/adapters/redis"
 	"github.com/coffeyvidzro/shiyao/internal/config"
@@ -33,7 +34,13 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	registry, err := daemon.New(ctx, cfg, db, redisClient)
+	natsClient, err := adapter.New(ctx, cfg.NATSURL)
+	if err != nil {
+		log.Fatalf("connect to nats: %v", err)
+	}
+	defer func() { _ = natsClient.Close() }()
+
+	registry, err := daemon.New(ctx, cfg, db, redisClient, natsClient)
 	if err != nil {
 		log.Fatalf("initialize daemon: %v", err)
 	}

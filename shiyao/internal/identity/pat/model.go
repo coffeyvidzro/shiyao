@@ -26,9 +26,9 @@ type CreateRequest struct {
 
 type Response struct {
 	ID         uuid.UUID  `json:"id"`
-	Name       string    `json:"name"`
-	Prefix     string    `json:"prefix"`
-	Scopes     []string  `json:"scopes"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	Scopes     []string   `json:"scopes"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`

@@ -12,8 +12,8 @@ func TestValidateCreateRequest(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "valid request",
-			req:     CreateRequest{Name: "CLI token"},
+			name: "valid request",
+			req:  CreateRequest{Name: "CLI token"},
 		},
 		{
 			name:    "missing name",
@@ -21,7 +21,7 @@ func TestValidateCreateRequest(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "expired token",
+			name: "expired token",
 			req: CreateRequest{
 				Name:      "expired",
 				ExpiresAt: timePtr(time.Now().Add(-time.Minute)),

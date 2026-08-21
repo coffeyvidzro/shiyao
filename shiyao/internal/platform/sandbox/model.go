@@ -1,6 +1,10 @@
 package sandbox
 
-import "github.com/google/uuid"
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
 
 type CreateRequest struct {
 	Template       string   `json:"template"`
@@ -24,4 +28,20 @@ type Response struct {
 	StartedAt      string    `json:"started_at,omitempty"`
 	StoppedAt      string    `json:"stopped_at,omitempty"`
 	UpdatedAt      string    `json:"updated_at"`
+}
+
+type LifecycleController interface {
+	ProvisionVM(context.Context, string) error
+	DestroyVM(context.Context, string) error
+}
+
+type LifecycleDispatcher interface {
+	DispatchCreate(context.Context, LifecycleEvent) error
+	DispatchDestroy(context.Context, LifecycleEvent) error
+}
+
+type LifecycleEvent struct {
+	SandboxID uuid.UUID `json:"sandbox_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	VMID      string    `json:"vm_id"`
 }
