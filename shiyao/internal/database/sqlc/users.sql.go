@@ -187,3 +187,36 @@ func (q *Queries) SetUserPassword(ctx context.Context, arg SetUserPasswordParams
 	)
 	return i, err
 }
+
+const updateUserProfile = `-- name: UpdateUserProfile :one
+UPDATE users
+SET
+    name = COALESCE($1, name),
+    email = COALESCE($2, email),
+    updated_at = NOW()
+WHERE id = $3
+  AND disabled_at IS NULL
+RETURNING id, email, email_verified, name, password_hash, disabled_at, created_at, updated_at
+`
+
+type UpdateUserProfileParams struct {
+	Name  *string   `db:"name" json:"name"`
+	Email *string   `db:"email" json:"email"`
+	ID    uuid.UUID `db:"id" json:"id"`
+}
+
+func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserProfile, arg.Name, arg.Email, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailVerified,
+		&i.Name,
+		&i.PasswordHash,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

@@ -17,10 +17,6 @@ func NewRepository(q *sqlc.Queries) *Repository {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Users
-// -----------------------------------------------------------------------------
-
 func (r *Repository) GetUserByEmail(
 	ctx context.Context,
 	email string,
@@ -55,10 +51,6 @@ func (r *Repository) MarkUserEmailVerified(
 ) (sqlc.User, error) {
 	return r.q.MarkUserEmailVerified(ctx, id)
 }
-
-// -----------------------------------------------------------------------------
-// Authentication transactions
-// -----------------------------------------------------------------------------
 
 func (r *Repository) CreateAuthTransaction(
 	ctx context.Context,
@@ -109,10 +101,6 @@ func (r *Repository) ExpireAuthTransaction(
 	return r.q.ExpireAuthTransaction(ctx, id)
 }
 
-// -----------------------------------------------------------------------------
-// Authentication challenges
-// -----------------------------------------------------------------------------
-
 func (r *Repository) CreateAuthChallenge(
 	ctx context.Context,
 	arg sqlc.CreateAuthChallengeParams,
@@ -140,42 +128,6 @@ func (r *Repository) ConsumeAuthChallenge(
 ) (sqlc.AuthChallenge, error) {
 	return r.q.ConsumeAuthChallenge(ctx, id)
 }
-
-// -----------------------------------------------------------------------------
-// Sessions
-// -----------------------------------------------------------------------------
-
-func (r *Repository) CreateSession(
-	ctx context.Context,
-	arg sqlc.CreateSessionParams,
-) (sqlc.Session, error) {
-	return r.q.CreateSession(ctx, arg)
-}
-
-func (r *Repository) GetSessionByTokenHash(
-	ctx context.Context,
-	tokenHash string,
-) (sqlc.Session, error) {
-	return r.q.GetSessionByTokenHash(ctx, tokenHash)
-}
-
-func (r *Repository) RevokeSession(
-	ctx context.Context,
-	arg sqlc.RevokeSessionParams,
-) error {
-	return r.q.RevokeSession(ctx, arg)
-}
-
-func (r *Repository) RevokeUserSessions(
-	ctx context.Context,
-	userID uuid.UUID,
-) error {
-	return r.q.RevokeUserSessions(ctx, userID)
-}
-
-// -----------------------------------------------------------------------------
-// OAuth
-// -----------------------------------------------------------------------------
 
 func (r *Repository) CreateOAuthAccount(
 	ctx context.Context,

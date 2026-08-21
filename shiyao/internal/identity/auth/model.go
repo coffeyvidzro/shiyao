@@ -34,10 +34,6 @@ type AuthResponse struct {
 	UserID string `json:"user_id"`
 }
 
-// -----------------------------------------------------------------------------
-// Request models
-// -----------------------------------------------------------------------------
-
 type startRequest struct {
 	Email string `json:"email" binding:"required,email"`
 }
@@ -59,10 +55,6 @@ type verifyOTPRequest struct {
 type setPasswordRequest struct {
 	Password string `json:"password" binding:"required"`
 }
-
-// -----------------------------------------------------------------------------
-// Response models
-// -----------------------------------------------------------------------------
 
 type startResponse struct {
 	TransactionID uuid.UUID `json:"transaction_id"`
