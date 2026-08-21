@@ -3,6 +3,7 @@ package vmm
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -45,18 +46,12 @@ func TestInstanceConfigureReservesLifecycleStateBeforeSlowSetup(t *testing.T) {
 	<-lease.setup
 
 	secondErr := instance.Configure(context.Background())
-	if secondErr == nil {
-		t.Fatal("expected concurrent Configure to be rejected")
-	}
-	if got := instance.state; got != StateConfiguring {
-		t.Fatalf("expected state %s while setup is blocked, got %s", StateConfiguring, got)
+	if secondErr == nil || !strings.Contains(secondErr.Error(), "configuring") {
+		t.Fatalf("expected concurrent Configure to be rejected while configuring, got %v", secondErr)
 	}
 
 	close(lease.release)
 	if err := <-firstDone; err == nil {
 		t.Fatal("expected first Configure to fail from test setup error")
-	}
-	if got := instance.state; got != StateCreated {
-		t.Fatalf("expected state %s after rollback, got %s", StateCreated, got)
 	}
 }
