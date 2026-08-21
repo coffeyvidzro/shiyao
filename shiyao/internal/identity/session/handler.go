@@ -6,12 +6,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
+	"github.com/coffeyvidzro/shiyao/pkg/helper"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
-	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
 )
 
 const sessionCookieName = "shiyao-session"
@@ -207,18 +206,8 @@ func newResponse(sess sqlc.Session) Response {
 		UserID:     sess.UserID,
 		IPAddress:  ipAddress,
 		UserAgent:  sess.UserAgent,
-		ExpiresAt:  formatTime(sess.ExpiresAt),
-		LastSeenAt: formatTime(sess.LastSeenAt),
-		CreatedAt:  formatTime(sess.CreatedAt),
+		ExpiresAt:  helper.FormatTime(sess.ExpiresAt),
+		LastSeenAt: helper.FormatTime(sess.LastSeenAt),
+		CreatedAt:  helper.FormatTime(sess.CreatedAt),
 	}
-}
-
-func formatTime(value pgtype.Timestamptz) string {
-	t := pgconv.TimestamptzToTime(value)
-
-	if t.IsZero() {
-		return ""
-	}
-
-	return t.Format(http.TimeFormat)
 }

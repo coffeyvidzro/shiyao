@@ -192,6 +192,7 @@ func (s *Service) SendOTP(
 	if err != nil {
 		return "", apperrors.NewInternal(
 			"failed to generate authentication code",
+			err,
 		)
 	}
 
@@ -317,118 +318,6 @@ func (s *Service) VerifyOTP(
 }
 
 // -----------------------------------------------------------------------------
-// OAuth
-// -----------------------------------------------------------------------------
-
-func (s *Service) GetOAuthAccount(
-	ctx context.Context,
-	provider string,
-	providerUID string,
-) (sqlc.OauthAccount, error) {
-	provider = normalizeOAuthProvider(provider)
-	providerUID = strings.TrimSpace(providerUID)
-
-	if provider == "" {
-		return sqlc.OauthAccount{}, apperrors.NewBadRequest(
-			"oauth provider is required",
-		)
-	}
-
-	if providerUID == "" {
-		return sqlc.OauthAccount{}, apperrors.NewBadRequest(
-			"oauth provider user ID is required",
-		)
-	}
-
-	return s.repo.GetOAuthAccount(
-		ctx,
-		sqlc.GetOAuthAccountParams{
-			Provider:    provider,
-			ProviderUid: providerUID,
-		},
-	)
-}
-
-func (s *Service) CreateOAuthAccount(
-	ctx context.Context,
-	userID uuid.UUID,
-	provider string,
-	providerUID string,
-) (sqlc.OauthAccount, error) {
-	if userID == uuid.Nil {
-		return sqlc.OauthAccount{}, apperrors.NewUnauthorized(
-			"authentication required",
-		)
-	}
-
-	provider = normalizeOAuthProvider(provider)
-	providerUID = strings.TrimSpace(providerUID)
-
-	if !isSupportedOAuthProvider(provider) {
-		return sqlc.OauthAccount{}, apperrors.NewBadRequest(
-			"unsupported oauth provider",
-		)
-	}
-
-	if providerUID == "" {
-		return sqlc.OauthAccount{}, apperrors.NewBadRequest(
-			"oauth provider user ID is required",
-		)
-	}
-
-	return s.repo.CreateOAuthAccount(
-		ctx,
-		sqlc.CreateOAuthAccountParams{
-			UserID:      userID,
-			Provider:    provider,
-			ProviderUid: providerUID,
-		},
-	)
-}
-
-func (s *Service) ListOAuthAccounts(
-	ctx context.Context,
-	userID uuid.UUID,
-) ([]sqlc.OauthAccount, error) {
-	if userID == uuid.Nil {
-		return nil, apperrors.NewUnauthorized(
-			"authentication required",
-		)
-	}
-
-	return s.repo.ListOAuthAccountsByUserID(
-		ctx,
-		userID,
-	)
-}
-
-func (s *Service) DeleteOAuthAccount(
-	ctx context.Context,
-	userID uuid.UUID,
-	accountID uuid.UUID,
-) error {
-	if userID == uuid.Nil {
-		return apperrors.NewUnauthorized(
-			"authentication required",
-		)
-	}
-
-	if accountID == uuid.Nil {
-		return apperrors.NewBadRequest(
-			"invalid oauth account ID",
-		)
-	}
-
-	return s.repo.DeleteOAuthAccount(
-		ctx,
-		sqlc.DeleteOAuthAccountParams{
-			ID:     accountID,
-			UserID: userID,
-		},
-	)
-}
-
-// -----------------------------------------------------------------------------
 // Transaction helpers
 // -----------------------------------------------------------------------------
 
@@ -517,6 +406,7 @@ func hashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", apperrors.NewInternal(
 			"failed to generate password salt",
+			err,
 		)
 	}
 
@@ -611,17 +501,4 @@ func hashToken(token string) string {
 
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
-}
-
-func normalizeOAuthProvider(provider string) string {
-	return strings.ToLower(strings.TrimSpace(provider))
-}
-
-func isSupportedOAuthProvider(provider string) bool {
-	switch provider {
-	case "google":
-		return true
-	default:
-		return false
-	}
 }
