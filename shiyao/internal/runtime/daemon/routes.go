@@ -21,6 +21,7 @@ func RegisterRoutes(router *gin.Engine, modules Modules) {
 	authMiddleware := middleware.NewAuth(
 		modules.Session.Service,
 		modules.PAT.Service,
+		modules.Users.Service,
 	).Handler()
 
 	api := router.Group("/v1")
