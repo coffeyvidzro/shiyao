@@ -36,5 +36,5 @@ WHERE id = sqlc.arg(id)
 -- name: TouchToken :exec
 UPDATE personal_access_tokens
 SET last_used_at = NOW()
-WHERE id = sqlc.arg(id)
-  AND last_used_at < NOW() - INTERVAL '1 minute';
+WHERE last_used_at IS NULL
+   OR last_used_at < NOW() - INTERVAL '1 minute';
