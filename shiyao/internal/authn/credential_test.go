@@ -43,7 +43,7 @@ func TestCredentialInputValidate(t *testing.T) {
 				if !errors.Is(err, ErrInvalidCredential) {
 					t.Fatalf("Validate() error = %v, want %v", err, ErrInvalidCredential)
 				}
-			return
+				return
 			}
 
 			if err != nil {
