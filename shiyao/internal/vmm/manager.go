@@ -62,23 +62,49 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 	if err := validateVMID(vmID); err != nil {
 		return nil, err
 	}
+
+	// 1. Fast path: Check limits and existence
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if len(m.instances) >= m.limits.MaxVMs {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("%w: maximum of %d resident VMs", ErrBackpressure, m.limits.MaxVMs)
 	}
 	if _, exists := m.instances[vmID]; exists {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("vm %s already exists", vmID)
 	}
+	m.mu.Unlock()
+
+	// 2. Allocate resources (Network/IPAM) WITHOUT holding the global lock.
+	// This prevents IPAM latency from blocking all other VM creations/destructions.
 	allocation, err := network.Acquire(vmID, m.netCfg, m.ipam)
 	if err != nil {
 		return nil, fmt.Errorf("allocate resources for vm %s: %w", vmID, err)
 	}
+
+	// 3. Slow path: Lock again to insert safely and prevent TOCTOU races.
+	m.mu.Lock()
+
+	// Re-check existence in case another goroutine created this vmID
+	// while we were waiting on network.Acquire()
+	if _, exists := m.instances[vmID]; exists {
+		m.mu.Unlock()
+
+		// CRITICAL: Cleanup the leaked resource before returning
+		_ = allocation.Release(context.Background())
+
+		return nil, fmt.Errorf("vm %s already exists", vmID)
+	}
+
+	// 4. Finalize initialization (Safe to do under lock, it's just memory assignment)
 	vsockCfg := m.vsockCfg
 	vsockCfg.GuestCID = allocation.CID()
 	socketPath := filepath.Join(os.TempDir(), fmt.Sprintf("firecracker-%s.sock", vmID))
+
 	inst := NewInstance(vmID, socketPath, m.baseCfg, allocation, vsockCfg, m.snapCfg)
 	m.instances[vmID] = inst
+	m.mu.Unlock()
+
 	return inst, nil
 }
 
