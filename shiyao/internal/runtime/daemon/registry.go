@@ -93,9 +93,6 @@ func NewModules(
 
 	networkConfig := network.DefaultConfig("")
 	networkConfig.UplinkInterface = cfg.VMMUplinkInterface
-	if err := networkConfig.Validate(); err != nil {
-		return Modules{}, fmt.Errorf("validate network config: %w", err)
-	}
 
 	vmmManager := vmm.NewManager(
 		vmmConfig,
@@ -132,6 +129,7 @@ func NewModules(
 			Repository: sandboxRepository,
 			Service:    sandboxService,
 			Handler:    sandbox.NewHandler(sandboxService),
+			VMM:        vmmManager,
 		},
 	}, nil
 }
