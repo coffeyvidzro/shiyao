@@ -10,7 +10,6 @@ import (
 func TestRegistry_PushAndPullArtifacts(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. Setup temporary local storage backend
 	storeDir, err := os.MkdirTemp("", "shiyao-store-*")
 	if err != nil {
 		t.Fatalf("failed to create store temp dir: %v", err)
@@ -27,7 +26,6 @@ func TestRegistry_PushAndPullArtifacts(t *testing.T) {
 		t.Fatalf("failed to create registry: %v", err)
 	}
 
-	// 2. Prepare dummy artifact file
 	sourceDir, err := os.MkdirTemp("", "shiyao-source-*")
 	if err != nil {
 		t.Fatalf("failed to create source temp dir: %v", err)
@@ -42,12 +40,10 @@ func TestRegistry_PushAndPullArtifacts(t *testing.T) {
 
 	snapshotName := "ubuntu-node-v1"
 
-	// 3. Test PushArtifact
 	if err := reg.PushArtifact(ctx, snapshotName, "rootfs.ext4", sourceFile); err != nil {
 		t.Fatalf("PushArtifact failed: %v", err)
 	}
 
-	// 4. Test PullArtifact to target location
 	targetDir, err := os.MkdirTemp("", "shiyao-target-*")
 	if err != nil {
 		t.Fatalf("failed to create target temp dir: %v", err)
@@ -59,7 +55,6 @@ func TestRegistry_PushAndPullArtifacts(t *testing.T) {
 		t.Fatalf("PullArtifact failed: %v", err)
 	}
 
-	// 5. Assert integrity
 	retrievedData, err := os.ReadFile(targetFile)
 	if err != nil {
 		t.Fatalf("failed to read pulled artifact: %v", err)
