@@ -42,7 +42,7 @@ func New(
 		gin.Logger(),
 		gin.Recovery(),
 		middleware.Secure(),
-		middleware.CORS(cfg.CORSOrigins(), cfg.Development),
+		middleware.CORS(cfg.CORSOrigins, cfg.Development),
 	)
 
 	RegisterRoutes(router, modules)
@@ -83,7 +83,7 @@ func NewModules(
 		Auth: AuthModule{
 			Repository: authRepository,
 			Service:    authService,
-			Handler:    auth.NewHandler(authService),
+			Handler:    auth.NewHandler(authService, sessionService),
 		},
 		PAT: PATModule{
 			Repository: patRepository,
