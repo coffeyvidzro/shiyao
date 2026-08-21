@@ -143,21 +143,44 @@ func (i *Instance) finishConfigureFailure(err error) error {
 
 func (i *Instance) Start(ctx context.Context) error {
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	if i.state != StateConfigured {
-		return fmt.Errorf("instance %s cannot be started in state %s", i.ID, i.state)
+		state := i.state
+		i.mu.Unlock()
+		return fmt.Errorf("instance %s cannot be started in state %s", i.ID, state)
 	}
 	if i.machine == nil {
+		i.mu.Unlock()
 		return fmt.Errorf("machine not configured")
 	}
-	if i.snapCfg.EnableResume {
-		if err := i.machine.ResumeVM(ctx); err != nil {
+	i.state = StateStarting
+	machine := i.machine
+	snapCfg := i.snapCfg
+	i.mu.Unlock()
+
+	var err error
+	if snapCfg.EnableResume {
+		err = machine.ResumeVM(ctx)
+	} else {
+		err = machine.Start(ctx)
+	}
+	if err != nil {
+		i.mu.Lock()
+		i.state = StateConfigured
+		i.mu.Unlock()
+		if snapCfg.EnableResume {
 			return fmt.Errorf("resume microvm snapshot: %w", err)
 		}
-	} else if err := i.machine.Start(ctx); err != nil {
 		return fmt.Errorf("start guest os: %w", err)
 	}
+
+	i.mu.Lock()
+	if i.state != StateStarting {
+		state := i.state
+		i.mu.Unlock()
+		return fmt.Errorf("instance %s start completed in unexpected state %s", i.ID, state)
+	}
 	i.state = StateRunning
+	i.mu.Unlock()
 	return nil
 }
 
