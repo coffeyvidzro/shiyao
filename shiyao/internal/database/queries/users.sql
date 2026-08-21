@@ -61,3 +61,13 @@ SET
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
   AND disabled_at IS NULL;
+
+-- name: UpdateUserProfile :one
+UPDATE users
+SET
+    name = COALESCE(sqlc.narg(name), name),
+    email = COALESCE(sqlc.narg(email), email),
+    updated_at = NOW()
+WHERE id = sqlc.arg(id)
+  AND disabled_at IS NULL
+RETURNING *;
