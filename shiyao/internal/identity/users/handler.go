@@ -3,9 +3,10 @@ package users
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/shiyao/shiyao/internal/authn"
-	"github.com/shiyao/shiyao/internal/database/sqlc"
+	"github.com/coffeyvidzro/shiyao/internal/authn"
+	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/shiyao/shiyao/internal/identity/session"
+	apperrors "github.com/shiyao/shiyao/pkg/errors"
 	"github.com/shiyao/shiyao/pkg/helper"
 	"github.com/shiyao/shiyao/pkg/httputil"
 )
@@ -21,7 +22,7 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) GetMe(c *gin.Context) {
 	userID, ok := authn.UserIDFromContext(c.Request.Context())
 	if !ok {
-		httputil.Error(c, httputil.Unauthorized("authentication required"))
+		httputil.Error(c, apperrors.NewUnauthorized("authentication required"))
 		return
 	}
 
@@ -43,7 +44,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 
 	userID, ok := authn.UserIDFromContext(c.Request.Context())
 	if !ok {
-		httputil.Error(c, httputil.Unauthorized("authentication required"))
+		httputil.Error(c, apperrors.NewUnauthorized("authentication required"))
 		return
 	}
 
@@ -59,7 +60,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 func (h *Handler) DeleteMe(c *gin.Context) {
 	userID, ok := authn.UserIDFromContext(c.Request.Context())
 	if !ok {
-		httputil.Error(c, httputil.Unauthorized("authentication required"))
+		httputil.Error(c, apperrors.NewUnauthorized("authentication required"))
 		return
 	}
 
