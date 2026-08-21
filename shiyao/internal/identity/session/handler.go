@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
+	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
 	"github.com/gin-gonic/gin"
@@ -52,7 +53,7 @@ func (h *Handler) Revoke(c *gin.Context) {
 
 	sessionID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		httputil.Error(c, NewBadRequestError("invalid session id"))
+		httputil.Error(c, apperrors.NewBadRequest("invalid session id"))
 		return
 	}
 
@@ -122,12 +123,12 @@ const (
 func UserIDFromContext(c *gin.Context) (uuid.UUID, error) {
 	value, exists := c.Get(ContextUserID)
 	if !exists {
-		return uuid.Nil, NewUnauthorizedError("authentication required")
+		return uuid.Nil, apperrors.NewUnauthorized("authentication required")
 	}
 
 	id, ok := value.(uuid.UUID)
 	if !ok {
-		return uuid.Nil, NewUnauthorizedError("invalid authentication context")
+		return uuid.Nil, apperrors.NewUnauthorized("invalid authentication context")
 	}
 
 	return id, nil
@@ -136,12 +137,12 @@ func UserIDFromContext(c *gin.Context) (uuid.UUID, error) {
 func SessionIDFromContext(c *gin.Context) (uuid.UUID, error) {
 	value, exists := c.Get(ContextSessionID)
 	if !exists {
-		return uuid.Nil, NewUnauthorizedError("authentication required")
+		return uuid.Nil, apperrors.NewUnauthorized("authentication required")
 	}
 
 	id, ok := value.(uuid.UUID)
 	if !ok {
-		return uuid.Nil, NewUnauthorizedError("invalid authentication context")
+		return uuid.Nil, apperrors.NewUnauthorized("invalid authentication context")
 	}
 
 	return id, nil
