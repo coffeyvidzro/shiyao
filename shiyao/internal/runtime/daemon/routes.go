@@ -1,20 +1,24 @@
 package daemon
 
-// import (
-// 	"net/http"
+import (
+	"net/http"
 
-// // 	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
-// // 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
-// // 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
-// )
+	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
+	"github.com/coffeyvidzro/shiyao/internal/identity/session"
+	"github.com/coffeyvidzro/shiyao/internal/identity/users"
+	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
 
-// func RegisterRoutes(e *echo.Echo, modules Modules) {
-// 	e.GET("/healthz", func(c *echo.Context) error {
-// 		return c.NoContent(http.StatusNoContent)
-// 	})
+	"github.com/gin-gonic/gin"
+)
 
-// 	api := e.Group("/v1")
-// 	auth.RegisterRoutes(api, modules.Auth.Handler)
-// 	session.RegisterRoutes(api, modules.Session.Handler)
-// 	users.RegisterRoutes(api, modules.Users.Handler)
-// }
+func RegisterRoutes(router *gin.Engine, modules Modules) {
+	router.GET("/healthz", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	api := router.Group("/v1")
+	auth.RegisterRoutes(api, modules.Auth.Handler)
+	session.RegisterRoutes(api, modules.Session.Handler)
+	users.RegisterRoutes(api, modules.Users.Handler)
+	sandbox.RegisterRoutes(api, modules.Sandbox.Handler)
+}

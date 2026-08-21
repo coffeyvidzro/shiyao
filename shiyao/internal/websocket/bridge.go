@@ -7,6 +7,8 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/vsock"
 )
 
+// ExecStreamer is an interface to abstract the VSOCK execution logic.
+// This allows you to mock it in tests and keeps the websocket package decoupled.
 type ExecStreamer interface {
 	ExecStream(
 		ctx context.Context,
@@ -16,6 +18,7 @@ type ExecStreamer interface {
 	) (vsock.ExecResult, error)
 }
 
+// BridgeExecStream handles the full lifecycle of a WebSocket execution session.
 func BridgeExecStream(
 	ctx context.Context,
 	conn *Conn,
@@ -24,6 +27,7 @@ func BridgeExecStream(
 ) {
 	defer conn.Close()
 
+	// 1. Read the initial exec request from the client
 	var clientMsg ClientMessage
 	if err := conn.ReadJSON(&clientMsg); err != nil {
 		log.Printf("failed to read initial exec message: %v", err)
@@ -38,6 +42,10 @@ func BridgeExecStream(
 		return
 	}
 
+	// 2. Dynamically set the deadline based on the requested execution timeout
+	conn.SetExecutionDeadline(clientMsg.TimeoutMS)
+
+	// 3. Convert to VSOCK ExecRequest
 	req := vsock.ExecRequest{
 		Version:   vsock.ProtocolVersion,
 		ID:        sandboxID,
@@ -48,6 +56,8 @@ func BridgeExecStream(
 		Stream:    true,
 	}
 
+	// 4. Stream the execution output back to the client
+	// CRITICAL: Return the error from WriteJSON to break the loop if the client disconnects.
 	result, err := streamer.ExecStream(ctx, sandboxID, req, func(frame vsock.ExecFrame) error {
 		var msgType string
 		switch frame.Stream {
@@ -64,6 +74,8 @@ func BridgeExecStream(
 			Data: frame.Data,
 		})
 	})
+
+	// 5. Handle errors or send the final result
 	if err != nil {
 		_ = conn.WriteJSON(ServerMessage{Type: TypeError, Error: err.Error()})
 		return
