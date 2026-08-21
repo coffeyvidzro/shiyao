@@ -13,7 +13,7 @@ func TestConfigValidateRejectsIPv6Host(t *testing.T) {
 
 func TestConfigValidateRejectsIPv6Guest(t *testing.T) {
 	cfg := DefaultConfig("tap0")
-	cfg.HostIP = "fd00::1"
+	cfg.HostIP = "172.16.0.1"
 	cfg.GuestIP = "fd00::2/64"
 
 	if err := cfg.Validate(); err == nil {
