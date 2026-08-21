@@ -15,6 +15,7 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
+	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
 )
 
 type Registry struct {
@@ -37,7 +38,12 @@ func New(
 	}
 
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery())
+	router.Use(
+		gin.Logger(),
+		gin.Recovery(),
+		middleware.Secure(),
+		middleware.CORS(cfg.CORSOrigins(), cfg.Development),
+	)
 
 	RegisterRoutes(router, modules)
 
