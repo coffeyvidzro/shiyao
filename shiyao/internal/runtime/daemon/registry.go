@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/coffeyvidzro/shiyao/internal/adapter/redis"
+	"github.com/coffeyvidzro/shiyao/internal/adapters/redis"
 	"github.com/coffeyvidzro/shiyao/internal/config"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
