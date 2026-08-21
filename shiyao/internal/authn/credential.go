@@ -18,3 +18,16 @@ type CredentialInput struct {
 	Type  CredentialType
 	Value string
 }
+
+func (c CredentialInput) Validate() error {
+	if c.Type == "" || c.Value == "" {
+		return ErrInvalidCredential
+	}
+
+	switch c.Type {
+	case CredentialSession, CredentialPAT:
+		return nil
+	default:
+		return ErrInvalidCredential
+	}
+}
