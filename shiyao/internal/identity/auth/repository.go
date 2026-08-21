@@ -142,38 +142,6 @@ func (r *Repository) ConsumeAuthChallenge(
 }
 
 // -----------------------------------------------------------------------------
-// Sessions
-// -----------------------------------------------------------------------------
-
-func (r *Repository) CreateSession(
-	ctx context.Context,
-	arg sqlc.CreateSessionParams,
-) (sqlc.Session, error) {
-	return r.q.CreateSession(ctx, arg)
-}
-
-func (r *Repository) GetSessionByTokenHash(
-	ctx context.Context,
-	tokenHash string,
-) (sqlc.Session, error) {
-	return r.q.GetSessionByTokenHash(ctx, tokenHash)
-}
-
-func (r *Repository) RevokeSession(
-	ctx context.Context,
-	arg sqlc.RevokeSessionParams,
-) error {
-	return r.q.RevokeSession(ctx, arg)
-}
-
-func (r *Repository) RevokeUserSessions(
-	ctx context.Context,
-	userID uuid.UUID,
-) error {
-	return r.q.RevokeUserSessions(ctx, userID)
-}
-
-// -----------------------------------------------------------------------------
 // OAuth
 // -----------------------------------------------------------------------------
 

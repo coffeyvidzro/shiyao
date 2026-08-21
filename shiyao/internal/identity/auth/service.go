@@ -18,10 +18,8 @@ import (
 const (
 	authTransactionTTL = 10 * time.Minute
 	authChallengeTTL   = 10 * time.Minute
-	sessionTTL         = 30 * 24 * time.Hour
-
-	otpLength      = 6
-	otpMaxAttempts = 5
+	otpLength          = 6
+	otpMaxAttempts     = 5
 )
 
 type Service struct {
@@ -342,86 +340,6 @@ func (s *Service) VerifyOTP(
 }
 
 // -----------------------------------------------------------------------------
-// Sessions
-// -----------------------------------------------------------------------------
-
-// CreateSession creates a persistent login session after authentication has
-// succeeded.
-//
-// The raw token should be given to the client as a secure cookie.
-// Only the hash is stored in PostgreSQL.
-func (s *Service) CreateSession(
-	ctx context.Context,
-	userID uuid.UUID,
-	ipAddress *string,
-	userAgent *string,
-) (string, sqlc.Session, error) {
-	token, err := generateSessionToken()
-	if err != nil {
-		return "", sqlc.Session{}, err
-	}
-
-	tokenHash := hashToken(token)
-	expiresAt := time.Now().Add(sessionTTL)
-
-	var ip *string
-	if ipAddress != nil {
-		ip = ipAddress
-	}
-
-	session, err := s.repo.CreateSession(
-		ctx,
-		sqlc.CreateSessionParams{
-			UserID:    userID,
-			TokenHash: tokenHash,
-			IPAddress: ip,
-			UserAgent: userAgent,
-			ExpiresAt: expiresAt,
-		},
-	)
-	if err != nil {
-		return "", sqlc.Session{}, err
-	}
-
-	return token, session, nil
-}
-
-func (s *Service) GetSession(
-	ctx context.Context,
-	token string,
-) (sqlc.Session, error) {
-	if token == "" {
-		return sqlc.Session{}, errors.New("session token is required")
-	}
-
-	return s.repo.GetSessionByTokenHash(
-		ctx,
-		hashToken(token),
-	)
-}
-
-func (s *Service) Logout(
-	ctx context.Context,
-	sessionID uuid.UUID,
-	userID uuid.UUID,
-) error {
-	return s.repo.RevokeSession(
-		ctx,
-		sqlc.RevokeSessionParams{
-			ID:     sessionID,
-			UserID: userID,
-		},
-	)
-}
-
-func (s *Service) LogoutAll(
-	ctx context.Context,
-	userID uuid.UUID,
-) error {
-	return s.repo.RevokeUserSessions(ctx, userID)
-}
-
-// -----------------------------------------------------------------------------
 // OAuth
 // -----------------------------------------------------------------------------
 
@@ -524,16 +442,6 @@ func generateOTP() (string, error) {
 	value %= 1_000_000
 
 	return fmt.Sprintf("%06d", value), nil
-}
-
-func generateSessionToken() (string, error) {
-	b := make([]byte, 32)
-
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(b), nil
 }
 
 func hashToken(token string) string {

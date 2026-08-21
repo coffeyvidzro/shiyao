@@ -47,14 +47,4 @@ func RegisterRoutes(
 	//
 	// POST /auth/password/set
 	protected.POST("/password/set", handler.SetPassword)
-
-	// Revoke the current session.
-	//
-	// POST /auth/logout
-	protected.POST("/logout", handler.Logout)
-
-	// Revoke all sessions belonging to the current user.
-	//
-	// POST /auth/logout-all
-	protected.POST("/logout-all", handler.LogoutAll)
 }
