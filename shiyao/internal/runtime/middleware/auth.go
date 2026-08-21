@@ -10,7 +10,7 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
-	apperrors "github.com/shiyao/shiyao/pkg/errors"
+	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 )
 
 const bearerScheme = "Bearer"
@@ -28,7 +28,9 @@ func NewAuth(sessions *session.Service, patResolver authn.Resolver, userService 
 func (a *Auth) Handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		principal, ok := a.resolveBearer(c)
-		if !ok { principal, ok = a.resolveSession(c) }
+		if !ok {
+			principal, ok = a.resolveSession(c)
+		}
 		if !ok || !a.userEnabled(c, principal) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, apperrors.NewUnauthorized("authentication required"))
 			return
@@ -40,8 +42,10 @@ func (a *Auth) Handler() gin.HandlerFunc {
 
 func (a *Auth) resolveBearer(c *gin.Context) (authn.Principal, bool) {
 	if a.pat == nil { return authn.Principal{}, false }
-	header := strings.TrimSpace(c.GetHeader("Authorization")); if header == "" { return authn.Principal{}, false }
-	parts := strings.Fields(header); if len(parts) != 2 || !strings.EqualFold(parts[0], bearerScheme) { return authn.Principal{}, false }
+	header := strings.TrimSpace(c.GetHeader("Authorization"))
+	if header == "" { return authn.Principal{}, false }
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], bearerScheme) { return authn.Principal{}, false }
 	principal, err := a.pat.Resolve(c.Request.Context(), authn.CredentialInput{Type: authn.CredentialPAT, Value: parts[1]})
 	if err != nil { return authn.Principal{}, false }
 	return principal, true
@@ -49,8 +53,10 @@ func (a *Auth) resolveBearer(c *gin.Context) (authn.Principal, bool) {
 
 func (a *Auth) resolveSession(c *gin.Context) (authn.Principal, bool) {
 	if a.sessions == nil { return authn.Principal{}, false }
-	cookie, err := c.Request.Cookie("shiyao-session"); if err != nil || strings.TrimSpace(cookie.Value) == "" { return authn.Principal{}, false }
-	sess, err := a.sessions.Get(c.Request.Context(), cookie.Value); if err != nil { return authn.Principal{}, false }
+	cookie, err := c.Request.Cookie("shiyao-session")
+	if err != nil || strings.TrimSpace(cookie.Value) == "" { return authn.Principal{}, false }
+	sess, err := a.sessions.Get(c.Request.Context(), cookie.Value)
+	if err != nil { return authn.Principal{}, false }
 	return authn.Principal{Subject: authn.Subject{ID: sess.UserID, Type: authn.SubjectUser}, Credential: authn.Credential{ID: sess.ID, Type: authn.CredentialSession}, Assurance: authn.AssuranceUnknown}, true
 }
 
