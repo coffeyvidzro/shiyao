@@ -9,20 +9,25 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
+	"github.com/shiyao/internal/vsock"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 )
 
+type repository interface {
+	Create(context.Context, sqlc.CreateSandboxParams) (sqlc.Sandbox, error)
+	GetByID(context.Context, uuid.UUID) (sqlc.Sandbox, error)
+	ListByUserID(context.Context, uuid.UUID) ([]sqlc.Sandbox, error)
+	UpdateStatus(context.Context, uuid.UUID, string) (sqlc.Sandbox, error)
+	Delete(context.Context, uuid.UUID) error
+}
+
 type Service struct {
-	repo      *Repository
+	repo      repository
 	vmManager VMManager
 }
 
-func NewService(repo *Repository, vmManager VMManager) *Service {
-	return &Service{
-		repo:      repo,
-		vmManager: vmManager,
-	}
+func NewService(repo repository, vmManager VMManager) *Service {
+	return &Service{repo: repo, vmManager: vmManager}
 }
 
 func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]sqlc.Sandbox, error) {
