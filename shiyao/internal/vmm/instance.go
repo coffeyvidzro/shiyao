@@ -17,13 +17,20 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/vsock"
 )
 
+type networkLease interface {
+	Config() network.Config
+	CID() uint32
+	Setup(context.Context) error
+	Release(context.Context) error
+}
+
 type Instance struct {
 	mu         sync.Mutex
 	ID         string
 	InstanceID string
 	SocketPath string
 	cfg        Config
-	network    *network.Allocation
+	network    networkLease
 	vsockCfg   vsock.Config
 	snapCfg    SnapshotConfig
 	snapInteg  SnapshotIntegrity
@@ -31,7 +38,7 @@ type Instance struct {
 	state      State
 }
 
-func NewInstance(id, socketPath string, cfg Config, allocation *network.Allocation, vsockCfg vsock.Config, snapCfg SnapshotConfig) *Instance {
+func NewInstance(id, socketPath string, cfg Config, allocation networkLease, vsockCfg vsock.Config, snapCfg SnapshotConfig) *Instance {
 	return &Instance{ID: id, SocketPath: socketPath, cfg: cfg, network: allocation, vsockCfg: vsockCfg, snapCfg: snapCfg, state: StateCreated}
 }
 
