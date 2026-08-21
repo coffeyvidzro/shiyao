@@ -12,6 +12,7 @@ func RegisterRoutes(
 
 	sandboxes.GET("", handler.List)
 	sandboxes.GET("/:id", handler.Get)
+	sandboxes.GET("/:id/exec/stream", handler.ExecStreamWS)
 	sandboxes.POST("", handler.Create)
 	sandboxes.DELETE("/:id", handler.Delete)
 }

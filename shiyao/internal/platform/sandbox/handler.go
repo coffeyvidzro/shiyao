@@ -3,6 +3,7 @@ package sandbox
 import (
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
+	ws "github.com/coffeyvidzro/shiyao/internal/websocket"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/coffeyvidzro/shiyao/pkg/helper"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
@@ -102,6 +103,36 @@ func (h *Handler) Delete(c *gin.Context) {
 	}
 
 	httputil.OK(c, gin.H{"message": "sandbox deleted"})
+}
+
+func (h *Handler) ExecStreamWS(c *gin.Context) {
+	userID, err := session.UserIDFromContext(c)
+	if err != nil {
+		httputil.Error(c, err)
+		return
+	}
+
+	sandboxID, err := parseSandboxID(c.Param("id"))
+	if err != nil {
+		httputil.Error(c, apperrors.NewBadRequest("invalid sandbox ID"))
+		return
+	}
+
+	sandbox, err := h.service.Get(c.Request.Context(), userID, sandboxID)
+	if err != nil {
+		httputil.Error(c, err)
+		return
+	}
+
+	conn, err := ws.Upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+
+	wsConn := ws.NewConn(conn)
+	wsConn.SetDeadlines()
+
+	ws.BridgeExecStream(c.Request.Context(), wsConn, sandbox.VmID, h.service)
 }
 
 func parseSandboxID(value string) (uuid.UUID, error) {

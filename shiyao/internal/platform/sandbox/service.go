@@ -3,8 +3,11 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
+	"github.com/coffeyvidzro/shiyao/internal/vsock"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/google/uuid"
 )
@@ -92,6 +95,15 @@ func (s *Service) Delete(
 	return s.repo.Delete(ctx, sandboxID)
 }
 
+func (s *Service) ExecStream(
+	ctx context.Context,
+	sandboxID string,
+	req vsock.ExecRequest,
+	receive func(vsock.ExecFrame) error,
+) (vsock.ExecResult, error) {
+	return vsock.ExecStream(ctx, socketPathForSandbox(sandboxID), req, receive)
+}
+
 func validateCreateRequest(req CreateRequest) error {
 	if req.VCPU < minVCPU || req.VCPU > maxVCPU {
 		return apperrors.NewBadRequest(
@@ -116,4 +128,8 @@ func validateCreateRequest(req CreateRequest) error {
 
 func newVMID() string {
 	return "sbx-" + uuid.NewString()
+}
+
+func socketPathForSandbox(sandboxID string) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("firecracker-%s.sock", sandboxID))
 }
