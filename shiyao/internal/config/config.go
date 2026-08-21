@@ -10,9 +10,11 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string `env:"DATABASE_URL,required"`
-	RedisURL    string `env:"REDIS_URL,required"`
-	NATSURL     string `env:"NATS_URL,required"`
+	DatabaseURL    string   `env:"DATABASE_URL,required"`
+	RedisURL       string   `env:"REDIS_URL,required"`
+	NATSURL        string   `env:"NATS_URL,required"`
+	CORSOrigins    []string `env:"CORS_ORIGINS" envSeparator:"," envDefault:"http://localhost:3000,http://127.0.0.1:3000"`
+	Development    bool     `env:"DEVELOPMENT" envDefault:"false"`
 }
 
 func Load() (Config, error) {
