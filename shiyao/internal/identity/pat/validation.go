@@ -2,16 +2,16 @@ package pat
 
 import (
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 )
 
 const (
-	maxNameLength   = 100
-	maxScopes       = 32
-	maxScopeLength  = 100
-	defaultTokenTTL = 0
+	maxNameLength  = 100
+	maxScopes      = 32
+	maxScopeLength = 100
 )
 
 func ValidateCreateRequest(req CreateRequest) error {
@@ -31,10 +31,8 @@ func ValidateCreateRequest(req CreateRequest) error {
 			return apperrors.NewBadRequest("invalid scope")
 		}
 	}
-	if req.ExpiresAt != nil && !req.ExpiresAt.After(timeNow()) {
+	if req.ExpiresAt != nil && !req.ExpiresAt.After(time.Now()) {
 		return apperrors.NewBadRequest("expires_at must be in the future")
 	}
 	return nil
 }
-
-var timeNow = func() time.Time { return time.Now() }
