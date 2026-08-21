@@ -36,15 +36,6 @@ type AuthTransaction struct {
 	UpdatedAt      pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
 
-type OauthAccount struct {
-	ID          uuid.UUID          `db:"id" json:"id"`
-	UserID      uuid.UUID          `db:"user_id" json:"user_id"`
-	Provider    string             `db:"provider" json:"provider"`
-	ProviderUid string             `db:"provider_uid" json:"provider_uid"`
-	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-}
-
 type Sandbox struct {
 	ID             uuid.UUID          `db:"id" json:"id"`
 	UserID         uuid.UUID          `db:"user_id" json:"user_id"`

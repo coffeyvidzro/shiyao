@@ -4,5 +4,4 @@ h1:wxdOafi33yKLxbYUyYy7DzmcC5B9Gv8zQ1FQzp2E72A=
 003_create_auth_transactions.sql h1:ghTA6A6p8lrB716opGYCNH0dnxYaQ2JgL8ta/mOI6fY=
 004_create_auth_challenges.sql h1:QEDQSW2MNs9qNFpPEaleZWZ4/3DQtvhaQNBz3mRxH7k=
 005_create_sessions.sql h1:iXrhVrrsAPfRcRS/HLGVAF+Uq2nY5/1kKo/iK8S+300=
-006_create_oauth_accounts.sql h1:jWaA2k8ur2hgqaIIbYW4wozSAtjP+mc1gN6VUgrAetM=
 007_create_sandboxes.sql h1:h3TmNAAnHvIf8gtpiaLd7vuIS1kDXY7mwYdDdlU+vu0=

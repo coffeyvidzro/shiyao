@@ -128,38 +128,3 @@ func (r *Repository) ConsumeAuthChallenge(
 ) (sqlc.AuthChallenge, error) {
 	return r.q.ConsumeAuthChallenge(ctx, id)
 }
-
-func (r *Repository) CreateOAuthAccount(
-	ctx context.Context,
-	arg sqlc.CreateOAuthAccountParams,
-) (sqlc.OauthAccount, error) {
-	return r.q.CreateOAuthAccount(ctx, arg)
-}
-
-func (r *Repository) GetOAuthAccount(
-	ctx context.Context,
-	arg sqlc.GetOAuthAccountParams,
-) (sqlc.OauthAccount, error) {
-	return r.q.GetOAuthAccount(ctx, arg)
-}
-
-func (r *Repository) GetOAuthAccountByID(
-	ctx context.Context,
-	id uuid.UUID,
-) (sqlc.OauthAccount, error) {
-	return r.q.GetOAuthAccountByID(ctx, id)
-}
-
-func (r *Repository) ListOAuthAccountsByUserID(
-	ctx context.Context,
-	userID uuid.UUID,
-) ([]sqlc.OauthAccount, error) {
-	return r.q.ListOAuthAccountsByUserID(ctx, userID)
-}
-
-func (r *Repository) DeleteOAuthAccount(
-	ctx context.Context,
-	arg sqlc.DeleteOAuthAccountParams,
-) error {
-	return r.q.DeleteOAuthAccount(ctx, arg)
-}

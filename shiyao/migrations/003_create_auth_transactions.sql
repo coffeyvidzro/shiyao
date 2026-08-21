@@ -32,9 +32,7 @@ CREATE TABLE IF NOT EXISTS auth_transactions (
             selected_method IS NULL
             OR selected_method IN (
                 'otp',
-                'password',
-                'google',
-                'github'
+                'password'
             )
         ),
 
