@@ -6,7 +6,7 @@ import (
 
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
-	"github.com/shiyao/pkg/httputil"
+	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 )
 
 type Handler struct {
