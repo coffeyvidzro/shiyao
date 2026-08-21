@@ -10,8 +10,8 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
-	"github.com/shiyao/shiyao/pkg/helper"
-	"github.com/shiyao/shiyao/pkg/httputil"
+	"github.com/coffeyvidzro/shiyao/pkg/helper"
+	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 )
 
 const sessionCookieName = "shiyao-session"
