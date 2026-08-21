@@ -4,14 +4,17 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const sessionCookieName = "shiyao-session"
 
 type Handler struct {
 	service *Service
@@ -30,18 +33,24 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	sessions, err := h.service.List(c.Request.Context(), userID)
+	sessions, err := h.service.List(
+		c.Request.Context(),
+		userID,
+	)
 	if err != nil {
 		httputil.Error(c, err)
 		return
 	}
 
 	items := make([]Response, 0, len(sessions))
+
 	for _, sess := range sessions {
 		items = append(items, newResponse(sess))
 	}
 
-	httputil.OK(c, gin.H{"sessions": items})
+	httputil.OK(c, gin.H{
+		"sessions": items,
+	})
 }
 
 func (h *Handler) Revoke(c *gin.Context) {
@@ -53,20 +62,31 @@ func (h *Handler) Revoke(c *gin.Context) {
 
 	sessionID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		httputil.Error(c, apperrors.NewBadRequest("invalid session id"))
+		httputil.Error(
+			c,
+			apperrors.NewBadRequest("invalid session id"),
+		)
 		return
 	}
 
-	if err := h.service.Revoke(c.Request.Context(), sessionID, userID); err != nil {
+	if err := h.service.Revoke(
+		c.Request.Context(),
+		sessionID,
+		userID,
+	); err != nil {
 		httputil.Error(c, err)
 		return
 	}
 
-	if currentID, err := SessionIDFromContext(c); err == nil && currentID == sessionID {
+	currentSessionID, err := SessionIDFromContext(c)
+
+	if err == nil && currentSessionID == sessionID {
 		ClearCookie(c)
 	}
 
-	httputil.OK(c, gin.H{"message": "session revoked"})
+	httputil.OK(c, gin.H{
+		"message": "session revoked",
+	})
 }
 
 func (h *Handler) RevokeAll(c *gin.Context) {
@@ -76,43 +96,59 @@ func (h *Handler) RevokeAll(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.RevokeAll(c.Request.Context(), userID); err != nil {
+	if err := h.service.RevokeAll(
+		c.Request.Context(),
+		userID,
+	); err != nil {
 		httputil.Error(c, err)
 		return
 	}
 
 	ClearCookie(c)
 
-	httputil.OK(c, gin.H{"message": "logged out from all sessions"})
+	httputil.OK(c, gin.H{
+		"message": "logged out from all sessions",
+	})
 }
 
-func SetCookie(c *gin.Context, token string, expiresAt time.Time) {
+func SetCookie(
+	c *gin.Context,
+	token string,
+	expiresAt time.Time,
+) {
 	maxAge := int(time.Until(expiresAt).Seconds())
+
 	if maxAge < 0 {
 		maxAge = 0
 	}
 
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "session",
-		Value:    token,
-		Path:     "/",
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(
+		c.Writer,
+		&http.Cookie{
+			Name:     sessionCookieName,
+			Value:    token,
+			Path:     "/",
+			MaxAge:   maxAge,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 }
 
 func ClearCookie(c *gin.Context) {
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "session",
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(
+		c.Writer,
+		&http.Cookie{
+			Name:     sessionCookieName,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 }
 
 const (
@@ -122,43 +158,54 @@ const (
 
 func UserIDFromContext(c *gin.Context) (uuid.UUID, error) {
 	value, exists := c.Get(ContextUserID)
+
 	if !exists {
-		return uuid.Nil, apperrors.NewUnauthorized("authentication required")
+		return uuid.Nil, apperrors.NewUnauthorized(
+			"authentication required",
+		)
 	}
 
-	id, ok := value.(uuid.UUID)
+	userID, ok := value.(uuid.UUID)
 	if !ok {
-		return uuid.Nil, apperrors.NewUnauthorized("invalid authentication context")
+		return uuid.Nil, apperrors.NewUnauthorized(
+			"invalid authentication context",
+		)
 	}
 
-	return id, nil
+	return userID, nil
 }
 
 func SessionIDFromContext(c *gin.Context) (uuid.UUID, error) {
 	value, exists := c.Get(ContextSessionID)
+
 	if !exists {
-		return uuid.Nil, apperrors.NewUnauthorized("authentication required")
+		return uuid.Nil, apperrors.NewUnauthorized(
+			"authentication required",
+		)
 	}
 
-	id, ok := value.(uuid.UUID)
+	sessionID, ok := value.(uuid.UUID)
 	if !ok {
-		return uuid.Nil, apperrors.NewUnauthorized("invalid authentication context")
+		return uuid.Nil, apperrors.NewUnauthorized(
+			"invalid authentication context",
+		)
 	}
 
-	return id, nil
+	return sessionID, nil
 }
 
 func newResponse(sess sqlc.Session) Response {
-	var ip *string
+	var ipAddress *string
+
 	if sess.IpAddress != nil {
 		value := sess.IpAddress.String()
-		ip = &value
+		ipAddress = &value
 	}
 
 	return Response{
 		ID:         sess.ID,
 		UserID:     sess.UserID,
-		IPAddress:  ip,
+		IPAddress:  ipAddress,
 		UserAgent:  sess.UserAgent,
 		ExpiresAt:  formatTime(sess.ExpiresAt),
 		LastSeenAt: formatTime(sess.LastSeenAt),
@@ -168,6 +215,7 @@ func newResponse(sess sqlc.Session) Response {
 
 func formatTime(value pgtype.Timestamptz) string {
 	t := pgconv.TimestamptzToTime(value)
+
 	if t.IsZero() {
 		return ""
 	}

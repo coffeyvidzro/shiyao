@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
+	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/argon2"
@@ -19,8 +20,9 @@ import (
 const (
 	authTransactionTTL = 10 * time.Minute
 	authChallengeTTL   = 10 * time.Minute
-	otpLength          = 6
-	otpMaxAttempts     = 5
+
+	otpLength      = 6
+	otpMaxAttempts = 5
 )
 
 type Service struct {
@@ -33,6 +35,15 @@ func NewService(repo *Repository) *Service {
 	}
 }
 
+// -----------------------------------------------------------------------------
+// Authentication
+// -----------------------------------------------------------------------------
+
+// Start begins an authentication transaction for an email address.
+//
+// The transaction is intentionally short-lived. The client receives the
+// transaction ID and can then choose one of the available authentication
+// methods.
 func (s *Service) Start(
 	ctx context.Context,
 	email string,
@@ -40,20 +51,31 @@ func (s *Service) Start(
 	email = normalizeEmail(email)
 
 	if email == "" {
-		return sqlc.AuthTransaction{}, errors.New("email is required")
+		return sqlc.AuthTransaction{}, apperrors.NewBadRequest(
+			"email is required",
+		)
 	}
 
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
+		// We don't expose whether the email exists.
+		//
+		// For the current implementation, however, the transaction requires
+		// a user. This can later be changed to support passwordless account
+		// creation without revealing account existence.
 		return sqlc.AuthTransaction{}, err
 	}
+
+	expiresAt := time.Now().Add(authTransactionTTL)
 
 	transaction, err := s.repo.CreateAuthTransaction(
 		ctx,
 		sqlc.CreateAuthTransactionParams{
 			UserID:     &user.ID,
 			Identifier: email,
-			ExpiresAt:  pgconv.NullableTimestamptz(timePtr(time.Now().Add(authTransactionTTL))),
+			ExpiresAt: pgconv.NullableTimestamptz(
+				&expiresAt,
+			),
 		},
 	)
 	if err != nil {
@@ -63,48 +85,82 @@ func (s *Service) Start(
 	return transaction, nil
 }
 
+// LoginWithPassword authenticates a user using the password associated with
+// the authentication transaction.
 func (s *Service) LoginWithPassword(
 	ctx context.Context,
 	transactionID uuid.UUID,
 	password string,
 ) (sqlc.User, error) {
-	transaction, err := s.repo.GetAuthTransactionByID(
-		ctx,
-		transactionID,
-	)
+	transaction, err := s.getValidTransaction(ctx, transactionID)
 	if err != nil {
-		return sqlc.User{}, ErrInvalidTransaction
-	}
-
-	if pgconv.TimestamptzToTime(transaction.ExpiresAt).Before(time.Now()) {
-		_ = s.repo.ExpireAuthTransaction(ctx, transactionID)
-		return sqlc.User{}, ErrTransactionExpired
+		return sqlc.User{}, err
 	}
 
 	if transaction.UserID == nil {
-		return sqlc.User{}, ErrInvalidCredentials
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"invalid credentials",
+		)
 	}
 
 	user, err := s.repo.GetUserByID(ctx, *transaction.UserID)
 	if err != nil {
-		return sqlc.User{}, ErrInvalidCredentials
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"invalid credentials",
+		)
 	}
 
 	if user.DisabledAt.Valid {
-		return sqlc.User{}, ErrUserDisabled
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"account is disabled",
+		)
 	}
 
 	if user.PasswordHash == nil || *user.PasswordHash == "" {
-		return sqlc.User{}, ErrPasswordNotSet
+		return sqlc.User{}, apperrors.NewBadRequest(
+			"password is not enrolled",
+		)
 	}
 
 	if !verifyPassword(password, *user.PasswordHash) {
-		return sqlc.User{}, ErrInvalidCredentials
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"invalid credentials",
+		)
 	}
 
-	_, err = s.repo.MarkAuthTransactionAuthenticated(
+	if _, err := s.repo.MarkAuthTransactionAuthenticated(
 		ctx,
 		transactionID,
+	); err != nil {
+		return sqlc.User{}, err
+	}
+
+	return user, nil
+}
+
+// SetPassword enrolls or replaces the password for an authenticated user.
+func (s *Service) SetPassword(
+	ctx context.Context,
+	userID uuid.UUID,
+	password string,
+) (sqlc.User, error) {
+	if userID == uuid.Nil {
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"authentication required",
+		)
+	}
+
+	hash, err := hashPassword(password)
+	if err != nil {
+		return sqlc.User{}, err
+	}
+
+	user, err := s.repo.SetUserPassword(
+		ctx,
+		sqlc.SetUserPasswordParams{
+			ID:           userID,
+			PasswordHash: &hash,
+		},
 	)
 	if err != nil {
 		return sqlc.User{}, err
@@ -113,59 +169,42 @@ func (s *Service) LoginWithPassword(
 	return user, nil
 }
 
-func (s *Service) SetPassword(
-	ctx context.Context,
-	userID uuid.UUID,
-	password string,
-) (sqlc.User, error) {
-	if err := validatePassword(password); err != nil {
-		return sqlc.User{}, err
-	}
+// -----------------------------------------------------------------------------
+// OTP
+// -----------------------------------------------------------------------------
 
-	hash, err := hashPassword(password)
-	if err != nil {
-		return sqlc.User{}, err
-	}
-
-	return s.repo.SetUserPassword(
-		ctx,
-		sqlc.SetUserPasswordParams{
-			ID:           userID,
-			PasswordHash: &hash,
-		},
-	)
-}
-
+// SendOTP creates a short-lived OTP challenge for an authentication
+// transaction.
+//
+// The returned code is currently useful for development/testing. In
+// production, this value should be passed to an email/SMS delivery service
+// instead of being returned to the HTTP handler.
 func (s *Service) SendOTP(
 	ctx context.Context,
 	transactionID uuid.UUID,
 ) (string, error) {
-	transaction, err := s.repo.GetAuthTransactionByID(
-		ctx,
-		transactionID,
-	)
-	if err != nil {
-		return "", ErrInvalidTransaction
-	}
-
-	if pgconv.TimestamptzToTime(transaction.ExpiresAt).Before(time.Now()) {
-		_ = s.repo.ExpireAuthTransaction(ctx, transactionID)
-		return "", ErrTransactionExpired
-	}
-
-	code, err := generateOTP()
+	transaction, err := s.getValidTransaction(ctx, transactionID)
 	if err != nil {
 		return "", err
 	}
 
-	tokenHash := hashToken(code)
+	code, err := generateOTP()
+	if err != nil {
+		return "", apperrors.NewInternal(
+			"failed to generate authentication code",
+		)
+	}
 
-	challenge, err := s.repo.CreateAuthChallenge(
+	expiresAt := time.Now().Add(authChallengeTTL)
+
+	_, err = s.repo.CreateAuthChallenge(
 		ctx,
 		sqlc.CreateAuthChallengeParams{
-			Identifier:        transaction.Identifier,
-			SecretHash:        tokenHash,
-			ExpiresAt:         pgconv.NullableTimestamptz(timePtr(time.Now().Add(authChallengeTTL))),
+			Identifier: transaction.Identifier,
+			SecretHash: hashToken(code),
+			ExpiresAt: pgconv.NullableTimestamptz(
+				&expiresAt,
+			),
 			Purpose:           "otp",
 			AuthTransactionID: &transactionID,
 			MaxAttempts:       otpMaxAttempts,
@@ -175,27 +214,19 @@ func (s *Service) SendOTP(
 		return "", err
 	}
 
-	_ = challenge
-
 	return code, nil
 }
 
+// VerifyOTP verifies the active OTP challenge and authenticates the
+// corresponding transaction.
 func (s *Service) VerifyOTP(
 	ctx context.Context,
 	transactionID uuid.UUID,
 	code string,
 ) (sqlc.User, error) {
-	transaction, err := s.repo.GetAuthTransactionByID(
-		ctx,
-		transactionID,
-	)
+	transaction, err := s.getValidTransaction(ctx, transactionID)
 	if err != nil {
-		return sqlc.User{}, ErrInvalidTransaction
-	}
-
-	if pgconv.TimestamptzToTime(transaction.ExpiresAt).Before(time.Now()) {
-		_ = s.repo.ExpireAuthTransaction(ctx, transactionID)
-		return sqlc.User{}, ErrTransactionExpired
+		return sqlc.User{}, err
 	}
 
 	challenge, err := s.repo.GetActiveAuthChallenge(
@@ -206,94 +237,107 @@ func (s *Service) VerifyOTP(
 		},
 	)
 	if err != nil {
-		return sqlc.User{}, ErrInvalidChallenge
-	}
-
-	if pgconv.TimestamptzToTime(challenge.ExpiresAt).Before(time.Now()) {
-		return sqlc.User{}, ErrChallengeExpired
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"invalid or expired authentication code",
+		)
 	}
 
 	if challenge.ConsumedAt.Valid {
-		return sqlc.User{}, ErrChallengeConsumed
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"authentication code has already been used",
+		)
+	}
+
+	if pgconv.TimestamptzToTime(challenge.ExpiresAt).Before(time.Now()) {
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"authentication code has expired",
+		)
 	}
 
 	if challenge.Attempts >= otpMaxAttempts {
-		return sqlc.User{}, ErrTooManyAttempts
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"too many authentication attempts",
+		)
 	}
 
-	if hashToken(code) != challenge.SecretHash {
+	code = strings.TrimSpace(code)
+
+	expectedHash := hashToken(code)
+
+	if subtle.ConstantTimeCompare(
+		[]byte(expectedHash),
+		[]byte(challenge.SecretHash),
+	) != 1 {
 		_, _ = s.repo.IncrementAuthChallengeAttempts(
 			ctx,
 			challenge.ID,
 		)
 
-		return sqlc.User{}, ErrInvalidCode
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"invalid authentication code",
+		)
 	}
 
-	_, err = s.repo.ConsumeAuthChallenge(
+	if _, err := s.repo.ConsumeAuthChallenge(
 		ctx,
 		challenge.ID,
-	)
-	if err != nil {
+	); err != nil {
 		return sqlc.User{}, err
 	}
 
-	var user sqlc.User
-
-	if transaction.UserID != nil {
-		user, err = s.repo.GetUserByID(
-			ctx,
-			*transaction.UserID,
-		)
-		if err != nil {
-			return sqlc.User{}, err
-		}
-	} else {
-		user, err = s.repo.CreateUser(
-			ctx,
-			sqlc.CreateUserParams{
-				Email: emailFromIdentifier(transaction.Identifier),
-			},
-		)
-		if err != nil {
-			return sqlc.User{}, err
-		}
+	user, err := s.getOrCreateOTPUser(
+		ctx,
+		transaction,
+	)
+	if err != nil {
+		return sqlc.User{}, err
 	}
 
 	if user.DisabledAt.Valid {
-		return sqlc.User{}, ErrUserDisabled
+		return sqlc.User{}, apperrors.NewUnauthorized(
+			"account is disabled",
+		)
 	}
 
-	_, err = s.repo.MarkUserEmailVerified(
+	if _, err := s.repo.MarkUserEmailVerified(
 		ctx,
 		user.ID,
-	)
-	if err != nil {
+	); err != nil {
 		return sqlc.User{}, err
 	}
 
-	_, err = s.repo.MarkAuthTransactionAuthenticated(
+	if _, err := s.repo.MarkAuthTransactionAuthenticated(
 		ctx,
 		transactionID,
-	)
-	if err != nil {
+	); err != nil {
 		return sqlc.User{}, err
 	}
 
 	return user, nil
 }
 
+// -----------------------------------------------------------------------------
+// OAuth
+// -----------------------------------------------------------------------------
+
 func (s *Service) GetOAuthAccount(
 	ctx context.Context,
 	provider string,
 	providerUID string,
 ) (sqlc.OauthAccount, error) {
+	provider = normalizeOAuthProvider(provider)
+	providerUID = strings.TrimSpace(providerUID)
+
 	if provider == "" {
-		return sqlc.OauthAccount{}, errors.New("oauth provider is required")
+		return sqlc.OauthAccount{}, apperrors.NewBadRequest(
+			"oauth provider is required",
+		)
 	}
 
 	if providerUID == "" {
-		return sqlc.OauthAccount{}, errors.New("oauth provider user ID is required")
+		return sqlc.OauthAccount{}, apperrors.NewBadRequest(
+			"oauth provider user ID is required",
+		)
 	}
 
 	return s.repo.GetOAuthAccount(
@@ -311,12 +355,25 @@ func (s *Service) CreateOAuthAccount(
 	provider string,
 	providerUID string,
 ) (sqlc.OauthAccount, error) {
-	if provider != "google" && provider != "github" {
-		return sqlc.OauthAccount{}, errors.New("unsupported oauth provider")
+	if userID == uuid.Nil {
+		return sqlc.OauthAccount{}, apperrors.NewUnauthorized(
+			"authentication required",
+		)
+	}
+
+	provider = normalizeOAuthProvider(provider)
+	providerUID = strings.TrimSpace(providerUID)
+
+	if !isSupportedOAuthProvider(provider) {
+		return sqlc.OauthAccount{}, apperrors.NewBadRequest(
+			"unsupported oauth provider",
+		)
 	}
 
 	if providerUID == "" {
-		return sqlc.OauthAccount{}, errors.New("oauth provider user ID is required")
+		return sqlc.OauthAccount{}, apperrors.NewBadRequest(
+			"oauth provider user ID is required",
+		)
 	}
 
 	return s.repo.CreateOAuthAccount(
@@ -333,6 +390,12 @@ func (s *Service) ListOAuthAccounts(
 	ctx context.Context,
 	userID uuid.UUID,
 ) ([]sqlc.OauthAccount, error) {
+	if userID == uuid.Nil {
+		return nil, apperrors.NewUnauthorized(
+			"authentication required",
+		)
+	}
+
 	return s.repo.ListOAuthAccountsByUserID(
 		ctx,
 		userID,
@@ -344,6 +407,18 @@ func (s *Service) DeleteOAuthAccount(
 	userID uuid.UUID,
 	accountID uuid.UUID,
 ) error {
+	if userID == uuid.Nil {
+		return apperrors.NewUnauthorized(
+			"authentication required",
+		)
+	}
+
+	if accountID == uuid.Nil {
+		return apperrors.NewBadRequest(
+			"invalid oauth account ID",
+		)
+	}
+
 	return s.repo.DeleteOAuthAccount(
 		ctx,
 		sqlc.DeleteOAuthAccountParams{
@@ -353,63 +428,96 @@ func (s *Service) DeleteOAuthAccount(
 	)
 }
 
-func timePtr(value time.Time) *time.Time {
-	return &value
-}
+// -----------------------------------------------------------------------------
+// Transaction helpers
+// -----------------------------------------------------------------------------
 
-func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-func emailFromIdentifier(identifier string) string {
-	return normalizeEmail(identifier)
-}
-
-func generateOTP() (string, error) {
-	var value uint32
-
-	b := make([]byte, 4)
-
-	if _, err := rand.Read(b); err != nil {
-		return "", err
+func (s *Service) getValidTransaction(
+	ctx context.Context,
+	transactionID uuid.UUID,
+) (sqlc.AuthTransaction, error) {
+	if transactionID == uuid.Nil {
+		return sqlc.AuthTransaction{}, apperrors.NewBadRequest(
+			"invalid transaction_id",
+		)
 	}
 
-	value = uint32(b[0])<<24 |
-		uint32(b[1])<<16 |
-		uint32(b[2])<<8 |
-		uint32(b[3])
-
-	value %= 1_000_000
-
-	return fmt.Sprintf("%06d", value), nil
-}
-
-func hashToken(token string) string {
-	hash := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(hash[:])
-}
-
-func validatePassword(password string) error {
-	if len(password) < 8 {
-		return errors.New("password must be at least 8 characters")
+	transaction, err := s.repo.GetAuthTransactionByID(
+		ctx,
+		transactionID,
+	)
+	if err != nil {
+		return sqlc.AuthTransaction{}, apperrors.NewUnauthorized(
+			"invalid authentication transaction",
+		)
 	}
 
-	if len(password) > 128 {
-		return errors.New("password must not exceed 128 characters")
+	if transaction.ExpiresAt.Valid {
+		expiresAt := pgconv.TimestamptzToTime(transaction.ExpiresAt)
+
+		if expiresAt.Before(time.Now()) {
+			_ = s.repo.ExpireAuthTransaction(
+				ctx,
+				transactionID,
+			)
+
+			return sqlc.AuthTransaction{}, apperrors.NewUnauthorized(
+				"authentication transaction has expired",
+			)
+		}
 	}
 
-	return nil
+	return transaction, nil
 }
+
+func (s *Service) getOrCreateOTPUser(
+	ctx context.Context,
+	transaction sqlc.AuthTransaction,
+) (sqlc.User, error) {
+	if transaction.UserID != nil {
+		user, err := s.repo.GetUserByID(
+			ctx,
+			*transaction.UserID,
+		)
+		if err != nil {
+			return sqlc.User{}, err
+		}
+
+		return user, nil
+	}
+
+	email := normalizeEmail(transaction.Identifier)
+
+	if email == "" {
+		return sqlc.User{}, apperrors.NewBadRequest(
+			"authentication identifier is missing",
+		)
+	}
+
+	user, err := s.repo.CreateUser(
+		ctx,
+		sqlc.CreateUserParams{
+			Email: email,
+		},
+	)
+	if err != nil {
+		return sqlc.User{}, err
+	}
+
+	return user, nil
+}
+
+// -----------------------------------------------------------------------------
+// Password hashing
+// -----------------------------------------------------------------------------
 
 func hashPassword(password string) (string, error) {
-	if err := validatePassword(password); err != nil {
-		return "", err
-	}
-
 	salt := make([]byte, 16)
 
 	if _, err := rand.Read(salt); err != nil {
-		return "", err
+		return "", apperrors.NewInternal(
+			"failed to generate password salt",
+		)
 	}
 
 	hash := argon2.IDKey(
@@ -429,8 +537,8 @@ func hashPassword(password string) (string, error) {
 }
 
 func verifyPassword(password string, encoded string) bool {
-
 	parts := strings.Split(encoded, "$")
+
 	if len(parts) != 5 {
 		return false
 	}
@@ -439,11 +547,7 @@ func verifyPassword(password string, encoded string) bool {
 		return false
 	}
 
-	var salt []byte
-
-	var err error
-
-	salt, err = hex.DecodeString(parts[3])
+	salt, err := hex.DecodeString(parts[3])
 	if err != nil {
 		return false
 	}
@@ -466,11 +570,58 @@ func verifyPassword(password string, encoded string) bool {
 		return false
 	}
 
-	var diff byte
+	return subtle.ConstantTimeCompare(
+		actual,
+		expected,
+	) == 1
+}
 
-	for i := range actual {
-		diff |= actual[i] ^ expected[i]
+// -----------------------------------------------------------------------------
+// OTP helpers
+// -----------------------------------------------------------------------------
+
+func generateOTP() (string, error) {
+	var value uint32
+
+	buffer := make([]byte, 4)
+
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
 	}
 
-	return diff == 0
+	value =
+		uint32(buffer[0])<<24 |
+			uint32(buffer[1])<<16 |
+			uint32(buffer[2])<<8 |
+			uint32(buffer[3])
+
+	value %= 1_000_000
+
+	return fmt.Sprintf("%0*d", otpLength, value), nil
+}
+
+func hashToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
+}
+
+// -----------------------------------------------------------------------------
+// Normalization
+// -----------------------------------------------------------------------------
+
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func normalizeOAuthProvider(provider string) string {
+	return strings.ToLower(strings.TrimSpace(provider))
+}
+
+func isSupportedOAuthProvider(provider string) bool {
+	switch provider {
+	case "google":
+		return true
+	default:
+		return false
+	}
 }

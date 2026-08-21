@@ -14,7 +14,13 @@ import (
 	"github.com/google/uuid"
 )
 
-const TTL = 30 * 24 * time.Hour
+const (
+	sessionTTL = 30 * 24 * time.Hour
+)
+
+var (
+	ErrInvalidSession = errors.New("invalid session")
+)
 
 type Service struct {
 	repo *Repository
@@ -32,69 +38,128 @@ func (s *Service) Create(
 	ipAddress *string,
 	userAgent *string,
 ) (string, sqlc.Session, error) {
+	if userID == uuid.Nil {
+		return "", sqlc.Session{}, errors.New("user id is required")
+	}
+
 	token, err := generateToken()
 	if err != nil {
 		return "", sqlc.Session{}, err
 	}
 
-	expiresAt := time.Now().Add(TTL)
-	ip := parseIP(ipAddress)
+	expiresAt := time.Now().Add(sessionTTL)
 
-	sess, err := s.repo.Create(
+	session, err := s.repo.Create(
 		ctx,
 		sqlc.CreateSessionParams{
+			UserID:    userID,
 			TokenHash: hashToken(token),
-			IpAddress: ip,
+			IpAddress: parseIP(ipAddress),
 			UserAgent: userAgent,
 			ExpiresAt: pgconv.NullableTimestamptz(&expiresAt),
-			UserID:    userID,
 		},
 	)
 	if err != nil {
 		return "", sqlc.Session{}, err
 	}
 
-	return token, sess, nil
+	return token, session, nil
 }
 
-func (s *Service) Get(ctx context.Context, token string) (sqlc.Session, error) {
+func (s *Service) Get(
+	ctx context.Context,
+	token string,
+) (sqlc.Session, error) {
 	if token == "" {
-		return sqlc.Session{}, errors.New("session token is required")
+		return sqlc.Session{}, ErrInvalidSession
 	}
 
-	return s.repo.GetByTokenHash(ctx, hashToken(token))
+	session, err := s.repo.GetByTokenHash(
+		ctx,
+		hashToken(token),
+	)
+	if err != nil {
+		return sqlc.Session{}, ErrInvalidSession
+	}
+
+	if !session.ExpiresAt.Valid {
+		return sqlc.Session{}, ErrInvalidSession
+	}
+
+	if time.Now().After(session.ExpiresAt.Time) {
+		return sqlc.Session{}, ErrInvalidSession
+	}
+
+	return session, nil
 }
 
-func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]sqlc.Session, error) {
+func (s *Service) List(
+	ctx context.Context,
+	userID uuid.UUID,
+) ([]sqlc.Session, error) {
+	if userID == uuid.Nil {
+		return nil, errors.New("user id is required")
+	}
+
 	return s.repo.ListByUserID(ctx, userID)
 }
 
-func (s *Service) Revoke(ctx context.Context, sessionID uuid.UUID, userID uuid.UUID) error {
-	return s.repo.Revoke(ctx, sqlc.RevokeSessionParams{
-		ID:     sessionID,
-		UserID: userID,
-	})
+func (s *Service) Revoke(
+	ctx context.Context,
+	sessionID uuid.UUID,
+	userID uuid.UUID,
+) error {
+	if sessionID == uuid.Nil {
+		return errors.New("session id is required")
+	}
+
+	if userID == uuid.Nil {
+		return errors.New("user id is required")
+	}
+
+	return s.repo.Revoke(
+		ctx,
+		sqlc.RevokeSessionParams{
+			ID:     sessionID,
+			UserID: userID,
+		},
+	)
 }
 
-func (s *Service) RevokeAll(ctx context.Context, userID uuid.UUID) error {
-	return s.repo.RevokeUserSessions(ctx, userID)
+func (s *Service) RevokeAll(
+	ctx context.Context,
+	userID uuid.UUID,
+) error {
+	if userID == uuid.Nil {
+		return errors.New("user id is required")
+	}
+
+	return s.repo.RevokeUserSessions(
+		ctx,
+		userID,
+	)
 }
 
 func parseIP(value *string) *netip.Addr {
-	if value == nil || *value == "" {
+	if value == nil {
 		return nil
 	}
 
-	parsed, err := netip.ParseAddr(*value)
+	if *value == "" {
+		return nil
+	}
+
+	ip, err := netip.ParseAddr(*value)
 	if err != nil {
 		return nil
 	}
 
-	return &parsed
+	return &ip
 }
 
 func generateToken() (string, error) {
 	b := make([]byte, 32)
+
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
@@ -104,5 +169,6 @@ func generateToken() (string, error) {
 
 func hashToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
+
 	return hex.EncodeToString(hash[:])
 }

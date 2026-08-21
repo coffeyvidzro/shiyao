@@ -1,5 +1,8 @@
-h1:b2RwwsicjnUYHdiJgVEXpFcFMquAMGAP/Xt9gfTiiR0=
-001_extensions.sql h1:BvtQirRtKxGUgZ/s2/TQ8rLlHtXnefhHvibfv5vLrqw=
-002_create_users.sql h1:A6WlO6HSPbRp4Tiqlz9Sc3NE/n/Oo4GHbEPLVmCgYl4=
-003_create_sessions.sql h1:j2J1eE9zcpX0jveGsR2YO0BjpYP8cIZ8/X1bbyojB70=
-004_create_sandboxes.sql h1:J5Sb9yjBBD5B5sJQydRVzAxc1yQ+Y3MuUYuH2HoAtU0=
+h1:wxdOafi33yKLxbYUyYy7DzmcC5B9Gv8zQ1FQzp2E72A=
+001_extensions.sql h1:RrXNNZbQIArQVUbNlcKKEQO8NI/9Oe8R3x6OvWc+4d0=
+002_create_users.sql h1:ZDoAYcXvJ+AYbYYD8Pyul2a5uPDm0eZ/07waXr+HgPo=
+003_create_auth_transactions.sql h1:ghTA6A6p8lrB716opGYCNH0dnxYaQ2JgL8ta/mOI6fY=
+004_create_auth_challenges.sql h1:QEDQSW2MNs9qNFpPEaleZWZ4/3DQtvhaQNBz3mRxH7k=
+005_create_sessions.sql h1:iXrhVrrsAPfRcRS/HLGVAF+Uq2nY5/1kKo/iK8S+300=
+006_create_oauth_accounts.sql h1:jWaA2k8ur2hgqaIIbYW4wozSAtjP+mc1gN6VUgrAetM=
+007_create_sandboxes.sql h1:h3TmNAAnHvIf8gtpiaLd7vuIS1kDXY7mwYdDdlU+vu0=

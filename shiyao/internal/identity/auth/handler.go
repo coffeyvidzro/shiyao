@@ -4,13 +4,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	sessionpkg "github.com/coffeyvidzro/shiyao/internal/identity/session"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -18,13 +17,21 @@ type Handler struct {
 	sessionService *sessionpkg.Service
 }
 
-func NewHandler(service *Service, sessionService *sessionpkg.Service) *Handler {
+func NewHandler(
+	service *Service,
+	sessionService *sessionpkg.Service,
+) *Handler {
 	return &Handler{
 		service:        service,
 		sessionService: sessionService,
 	}
 }
 
+// -----------------------------------------------------------------------------
+// Authentication
+// -----------------------------------------------------------------------------
+
+// Start begins an authentication transaction for an email address.
 func (h *Handler) Start(c *gin.Context) {
 	var req startRequest
 
@@ -36,7 +43,7 @@ func (h *Handler) Start(c *gin.Context) {
 		return
 	}
 
-	email := strings.TrimSpace(strings.ToLower(req.Email))
+	email := normalizeEmail(req.Email)
 
 	transaction, err := h.service.Start(
 		c.Request.Context(),
@@ -49,10 +56,11 @@ func (h *Handler) Start(c *gin.Context) {
 
 	httputil.OK(c, startResponse{
 		TransactionID: transaction.ID,
-		Methods:       authenticationMethods(transaction),
+		Methods:       authenticationMethods(),
 	})
 }
 
+// LoginWithPassword authenticates a user using their password.
 func (h *Handler) LoginWithPassword(c *gin.Context) {
 	var req passwordLoginRequest
 
@@ -83,29 +91,10 @@ func (h *Handler) LoginWithPassword(c *gin.Context) {
 		return
 	}
 
-	token, sess, err := h.sessionService.Create(
-		c.Request.Context(),
-		user.ID,
-		clientIP(c),
-		userAgent(c),
-	)
-	if err != nil {
-		httputil.Error(c, err)
-		return
-	}
-
-	sessionpkg.SetCookie(
-		c,
-		token,
-		sess.ExpiresAt.Time,
-	)
-
-	httputil.OK(c, authenticationResponse{
-		UserID:        user.ID,
-		SessionExpiry: sess.ExpiresAt.Time.Format(http.TimeFormat),
-	})
+	h.createSession(c, user.ID)
 }
 
+// SendOTP sends an OTP for the current authentication transaction.
 func (h *Handler) SendOTP(c *gin.Context) {
 	var req sendOTPRequest
 
@@ -126,11 +115,10 @@ func (h *Handler) SendOTP(c *gin.Context) {
 		return
 	}
 
-	_, err = h.service.SendOTP(
+	if _, err := h.service.SendOTP(
 		c.Request.Context(),
 		transactionID,
-	)
-	if err != nil {
+	); err != nil {
 		httputil.Error(c, err)
 		return
 	}
@@ -140,6 +128,7 @@ func (h *Handler) SendOTP(c *gin.Context) {
 	})
 }
 
+// VerifyOTP verifies the OTP and authenticates the user.
 func (h *Handler) VerifyOTP(c *gin.Context) {
 	var req verifyOTPRequest
 
@@ -172,29 +161,10 @@ func (h *Handler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	token, sess, err := h.sessionService.Create(
-		c.Request.Context(),
-		user.ID,
-		clientIP(c),
-		userAgent(c),
-	)
-	if err != nil {
-		httputil.Error(c, err)
-		return
-	}
-
-	sessionpkg.SetCookie(
-		c,
-		token,
-		sess.ExpiresAt.Time,
-	)
-
-	httputil.OK(c, authenticationResponse{
-		UserID:        user.ID,
-		SessionExpiry: sess.ExpiresAt.Time.Format(http.TimeFormat),
-	})
+	h.createSession(c, user.ID)
 }
 
+// SetPassword enrolls a password for the authenticated user.
 func (h *Handler) SetPassword(c *gin.Context) {
 	var req setPasswordRequest
 
@@ -222,10 +192,42 @@ func (h *Handler) SetPassword(c *gin.Context) {
 		return
 	}
 
-	httputil.OK(c, gin.H{
-		"user_id": user.ID,
+	httputil.OK(c, authenticationResponse{
+		UserID: user.ID,
 	})
 }
+
+// -----------------------------------------------------------------------------
+// Session creation
+// -----------------------------------------------------------------------------
+
+func (h *Handler) createSession(c *gin.Context, userID uuid.UUID) {
+	token, sess, err := h.sessionService.Create(
+		c.Request.Context(),
+		userID,
+		clientIP(c),
+		userAgent(c),
+	)
+	if err != nil {
+		httputil.Error(c, err)
+		return
+	}
+
+	sessionpkg.SetCookie(
+		c,
+		token,
+		sess.ExpiresAt.Time,
+	)
+
+	httputil.OK(c, authenticationResponse{
+		UserID:        userID,
+		SessionExpiry: sess.ExpiresAt.Time.Format(http.TimeFormat),
+	})
+}
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
 
 func parseUUID(value string) (uuid.UUID, error) {
 	return uuid.Parse(strings.TrimSpace(value))
@@ -251,10 +253,7 @@ func userAgent(c *gin.Context) *string {
 	return &value
 }
 
-func authenticationMethods(
-	transaction sqlc.AuthTransaction,
-) []string {
-
+func authenticationMethods() []string {
 	return []string{
 		"password",
 		"otp",

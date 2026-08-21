@@ -3,8 +3,7 @@ package users
 import "github.com/google/uuid"
 
 type UpdateMeRequest struct {
-	Name  *string `json:"name"`
-	Email *string `json:"email" binding:"omitempty,email"`
+	Name *string `json:"name"`
 }
 
 type Response struct {
