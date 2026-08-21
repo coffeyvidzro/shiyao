@@ -8,14 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/coffeyvidzro/shiyao/internal/adapters/redis"
-	"github.com/coffeyvidzro/shiyao/internal/config"
-	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
-	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
-	"github.com/coffeyvidzro/shiyao/internal/identity/pat"
-	"github.com/coffeyvidzro/shiyao/internal/identity/session"
-	"github.com/coffeyvidzro/shiyao/internal/identity/users"
-	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
-	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
+	"github.com/coffeyvidzro/shiyao/shiyao/internal/config"
+	"github.com/coffeyvidzro/shiyao/shiyao/internal/database/sqlc"
+	"github.com/coffeyvidzro/shiyao/shiyao/internal/identity/auth"
+	"github.com/coffeyvidzro/shiyao/shiyao/internal/identity/pat"
+	"github.com/coffeyvidzro/shiyao/shiyao/internal/identity/session"
+	"github.com/coffeyvidzro/shiyao/shiyao/internal/identity/users"
+	"github.com/coffeyvidzro/shiyao/shiyao/internal/platform/sandbox"
+	"github.com/coffeyvidzro/shiyao/shiyao/internal/runtime/middleware"
 )
 
 type Registry struct {
@@ -77,7 +77,7 @@ func NewModules(
 	patService := pat.NewService(patRepository)
 
 	sandboxRepository := sandbox.NewRepository(queries)
-	sandboxService := sandbox.NewService(sandboxRepository)
+	sandboxService := sandbox.NewService(sandboxRepository, nil)
 
 	return Modules{
 		Auth: AuthModule{
