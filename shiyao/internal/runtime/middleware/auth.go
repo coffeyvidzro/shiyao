@@ -8,6 +8,7 @@ import (
 
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
+	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 )
 
@@ -16,27 +17,28 @@ const bearerScheme = "Bearer"
 type Auth struct {
 	sessions *session.Service
 	pat      authn.Resolver
+	users    *users.Service
 }
 
-func NewAuth(sessions *session.Service, patResolver authn.Resolver) *Auth {
-	return &Auth{sessions: sessions, pat: patResolver}
+func NewAuth(sessions *session.Service, patResolver authn.Resolver, userService *users.Service) *Auth {
+	return &Auth{sessions: sessions, pat: patResolver, users: userService}
 }
 
 func (a *Auth) Handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if principal, ok := a.resolveBearer(c); ok {
-			setPrincipal(c, principal)
-			c.Next()
+		var principal authn.Principal
+		var ok bool
+
+		if principal, ok = a.resolveBearer(c); !ok {
+			principal, ok = a.resolveSession(c)
+		}
+		if !ok || !a.userEnabled(c, principal) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apperrors.NewUnauthorized("authentication required"))
 			return
 		}
 
-		if principal, ok := a.resolveSession(c); ok {
-			setPrincipal(c, principal)
-			c.Next()
-			return
-		}
-
-		c.AbortWithStatusJSON(http.StatusUnauthorized, apperrors.NewUnauthorized("authentication required"))
+		setPrincipal(c, principal)
+		c.Next()
 	}
 }
 
@@ -82,10 +84,19 @@ func (a *Auth) resolveSession(c *gin.Context) (authn.Principal, bool) {
 	}
 
 	return authn.Principal{
-		Subject: authn.Subject{ID: sess.UserID, Type: authn.SubjectUser},
+		Subject:    authn.Subject{ID: sess.UserID, Type: authn.SubjectUser},
 		Credential: authn.Credential{ID: sess.ID, Type: authn.CredentialSession},
-		Assurance: authn.AssuranceUnknown,
+		Assurance:  authn.AssuranceUnknown,
 	}, true
+}
+
+func (a *Auth) userEnabled(c *gin.Context, principal authn.Principal) bool {
+	if a.users == nil || principal.Subject.Type != authn.SubjectUser || principal.Subject.ID == [16]byte{} {
+		return false
+	}
+
+	_, err := a.users.GetMe(c.Request.Context(), principal.Subject.ID)
+	return err == nil
 }
 
 func setPrincipal(c *gin.Context, principal authn.Principal) {
