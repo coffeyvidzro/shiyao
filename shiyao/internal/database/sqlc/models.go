@@ -36,6 +36,18 @@ type AuthTransaction struct {
 	UpdatedAt      pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
 
+type PersonalAccessToken struct {
+	ID          uuid.UUID          `db:"id" json:"id"`
+	UserID      uuid.UUID          `db:"user_id" json:"user_id"`
+	Name        string             `db:"name" json:"name"`
+	TokenHash   string             `db:"token_hash" json:"token_hash"`
+	TokenPrefix string             `db:"token_prefix" json:"token_prefix"`
+	Scopes      []string           `db:"scopes" json:"scopes"`
+	ExpiresAt   pgtype.Timestamptz `db:"expires_at" json:"expires_at"`
+	LastUsedAt  pgtype.Timestamptz `db:"last_used_at" json:"last_used_at"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
 type Sandbox struct {
 	ID             uuid.UUID          `db:"id" json:"id"`
 	UserID         uuid.UUID          `db:"user_id" json:"user_id"`
