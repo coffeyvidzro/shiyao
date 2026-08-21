@@ -36,6 +36,17 @@ func (r *Repository) ListByUserID(
 	return r.q.ListSandboxesByUser(ctx, userID)
 }
 
+func (r *Repository) UpdateStatus(
+	ctx context.Context,
+	id uuid.UUID,
+	status string,
+) (sqlc.Sandbox, error) {
+	return r.q.UpdateSandboxStatus(ctx, sqlc.UpdateSandboxStatusParams{
+		ID:     id,
+		Status: &status,
+	})
+}
+
 func (r *Repository) Delete(
 	ctx context.Context,
 	id uuid.UUID,
