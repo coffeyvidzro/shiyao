@@ -46,9 +46,25 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const disableUser = `-- name: DisableUser :exec
+UPDATE users
+SET
+    disabled_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+  AND disabled_at IS NULL
+`
+
+func (q *Queries) DisableUser(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, disableUser, id)
+	return err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, email_verified, name, password_hash, disabled_at, created_at, updated_at FROM users
+SELECT id, email, email_verified, name, password_hash, disabled_at, created_at, updated_at
+FROM users
 WHERE email = $1
+  AND disabled_at IS NULL
 LIMIT 1
 `
 
@@ -68,14 +84,96 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 	return i, err
 }
 
+const getUserByEmailIncludingDisabled = `-- name: GetUserByEmailIncludingDisabled :one
+SELECT id, email, email_verified, name, password_hash, disabled_at, created_at, updated_at
+FROM users
+WHERE email = $1
+LIMIT 1
+`
+
+func (q *Queries) GetUserByEmailIncludingDisabled(ctx context.Context, email string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByEmailIncludingDisabled, email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailVerified,
+		&i.Name,
+		&i.PasswordHash,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, email_verified, name, password_hash, disabled_at, created_at, updated_at FROM users
+SELECT id, email, email_verified, name, password_hash, disabled_at, created_at, updated_at
+FROM users
 WHERE id = $1
+  AND disabled_at IS NULL
 LIMIT 1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 	row := q.db.QueryRow(ctx, getUserByID, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailVerified,
+		&i.Name,
+		&i.PasswordHash,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markUserEmailVerified = `-- name: MarkUserEmailVerified :one
+UPDATE users
+SET
+    email_verified = TRUE,
+    updated_at = NOW()
+WHERE id = $1
+  AND disabled_at IS NULL
+RETURNING id, email, email_verified, name, password_hash, disabled_at, created_at, updated_at
+`
+
+func (q *Queries) MarkUserEmailVerified(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, markUserEmailVerified, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailVerified,
+		&i.Name,
+		&i.PasswordHash,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setUserPassword = `-- name: SetUserPassword :one
+UPDATE users
+SET
+    password_hash = $1,
+    updated_at = NOW()
+WHERE id = $2
+  AND disabled_at IS NULL
+RETURNING id, email, email_verified, name, password_hash, disabled_at, created_at, updated_at
+`
+
+type SetUserPasswordParams struct {
+	PasswordHash *string   `db:"password_hash" json:"password_hash"`
+	ID           uuid.UUID `db:"id" json:"id"`
+}
+
+func (q *Queries) SetUserPassword(ctx context.Context, arg SetUserPasswordParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserPassword, arg.PasswordHash, arg.ID)
 	var i User
 	err := row.Scan(
 		&i.ID,

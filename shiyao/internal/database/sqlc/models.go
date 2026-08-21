@@ -12,13 +12,28 @@ import (
 )
 
 type AuthChallenge struct {
-	Identifier string             `db:"identifier" json:"identifier"`
-	TokenHash  string             `db:"token_hash" json:"token_hash"`
-	Purpose    string             `db:"purpose" json:"purpose"`
-	State      []byte             `db:"state" json:"state"`
-	ExpiresAt  pgtype.Timestamptz `db:"expires_at" json:"expires_at"`
-	ConsumedAt pgtype.Timestamptz `db:"consumed_at" json:"consumed_at"`
-	CreatedAt  pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	ID                uuid.UUID          `db:"id" json:"id"`
+	AuthTransactionID *uuid.UUID         `db:"auth_transaction_id" json:"auth_transaction_id"`
+	Identifier        string             `db:"identifier" json:"identifier"`
+	SecretHash        string             `db:"secret_hash" json:"secret_hash"`
+	Purpose           string             `db:"purpose" json:"purpose"`
+	State             []byte             `db:"state" json:"state"`
+	Attempts          int32              `db:"attempts" json:"attempts"`
+	MaxAttempts       int32              `db:"max_attempts" json:"max_attempts"`
+	ExpiresAt         pgtype.Timestamptz `db:"expires_at" json:"expires_at"`
+	ConsumedAt        pgtype.Timestamptz `db:"consumed_at" json:"consumed_at"`
+	CreatedAt         pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
+type AuthTransaction struct {
+	ID             uuid.UUID          `db:"id" json:"id"`
+	Identifier     string             `db:"identifier" json:"identifier"`
+	UserID         *uuid.UUID         `db:"user_id" json:"user_id"`
+	State          string             `db:"state" json:"state"`
+	SelectedMethod *string            `db:"selected_method" json:"selected_method"`
+	ExpiresAt      pgtype.Timestamptz `db:"expires_at" json:"expires_at"`
+	CreatedAt      pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
 
 type OauthAccount struct {
@@ -43,6 +58,7 @@ type Sandbox struct {
 	CreatedAt      pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	StartedAt      pgtype.Timestamptz `db:"started_at" json:"started_at"`
 	StoppedAt      pgtype.Timestamptz `db:"stopped_at" json:"stopped_at"`
+	UpdatedAt      pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
 
 type Session struct {

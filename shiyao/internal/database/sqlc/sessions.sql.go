@@ -19,14 +19,16 @@ INSERT INTO sessions (
     token_hash,
     ip_address,
     user_agent,
-    expires_at
+    expires_at,
+    last_seen_at
 )
 SELECT
     u.id,
     $1,
     $2::inet,
     $3::text,
-    $4::timestamptz
+    $4::timestamptz,
+    NOW()
 FROM users AS u
 WHERE u.id = $5
   AND u.disabled_at IS NULL
@@ -62,4 +64,157 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getSessionByID = `-- name: GetSessionByID :one
+SELECT s.id, s.user_id, s.token_hash, s.ip_address, s.user_agent, s.expires_at, s.last_seen_at, s.revoked_at, s.created_at
+FROM sessions AS s
+JOIN users AS u
+    ON u.id = s.user_id
+WHERE s.id = $1
+  AND s.expires_at > NOW()
+  AND s.revoked_at IS NULL
+  AND u.disabled_at IS NULL
+LIMIT 1
+`
+
+func (q *Queries) GetSessionByID(ctx context.Context, id uuid.UUID) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionByID, id)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TokenHash,
+		&i.IpAddress,
+		&i.UserAgent,
+		&i.ExpiresAt,
+		&i.LastSeenAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
+SELECT s.id, s.user_id, s.token_hash, s.ip_address, s.user_agent, s.expires_at, s.last_seen_at, s.revoked_at, s.created_at
+FROM sessions AS s
+JOIN users AS u
+    ON u.id = s.user_id
+WHERE s.token_hash = $1
+  AND s.expires_at > NOW()
+  AND s.revoked_at IS NULL
+  AND u.disabled_at IS NULL
+LIMIT 1
+`
+
+func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionByTokenHash, tokenHash)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TokenHash,
+		&i.IpAddress,
+		&i.UserAgent,
+		&i.ExpiresAt,
+		&i.LastSeenAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listSessionsByUserID = `-- name: ListSessionsByUserID :many
+SELECT s.id, s.user_id, s.token_hash, s.ip_address, s.user_agent, s.expires_at, s.last_seen_at, s.revoked_at, s.created_at
+FROM sessions AS s
+JOIN users AS u
+    ON u.id = s.user_id
+WHERE s.user_id = $1
+  AND s.expires_at > NOW()
+  AND s.revoked_at IS NULL
+  AND u.disabled_at IS NULL
+ORDER BY s.last_seen_at DESC NULLS LAST
+`
+
+func (q *Queries) ListSessionsByUserID(ctx context.Context, userID uuid.UUID) ([]Session, error) {
+	rows, err := q.db.Query(ctx, listSessionsByUserID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TokenHash,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.ExpiresAt,
+			&i.LastSeenAt,
+			&i.RevokedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const revokeSession = `-- name: RevokeSession :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND user_id = $2
+  AND revoked_at IS NULL
+`
+
+type RevokeSessionParams struct {
+	ID     uuid.UUID `db:"id" json:"id"`
+	UserID uuid.UUID `db:"user_id" json:"user_id"`
+}
+
+func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) error {
+	_, err := q.db.Exec(ctx, revokeSession, arg.ID, arg.UserID)
+	return err
+}
+
+const revokeUserSessions = `-- name: RevokeUserSessions :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_id = $1
+  AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeUserSessions(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, revokeUserSessions, userID)
+	return err
+}
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE sessions
+SET last_seen_at = NOW()
+WHERE id = $1
+  AND user_id = $2
+  AND expires_at > NOW()
+  AND revoked_at IS NULL
+  AND (
+      last_seen_at IS NULL
+      OR last_seen_at < NOW() - INTERVAL '5 minutes'
+  )
+`
+
+type TouchSessionParams struct {
+	ID     uuid.UUID `db:"id" json:"id"`
+	UserID uuid.UUID `db:"user_id" json:"user_id"`
+}
+
+func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
+	_, err := q.db.Exec(ctx, touchSession, arg.ID, arg.UserID)
+	return err
 }
