@@ -186,30 +186,50 @@ func (i *Instance) Start(ctx context.Context) error {
 
 func (i *Instance) Stop(ctx context.Context) error {
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	if i.state != StateRunning && i.state != StateConfigured && i.state != StateCleanupFailed {
+		i.mu.Unlock()
 		return nil
 	}
 	i.state = StateStopping
+	machine := i.machine
+	networkLease := i.network
+	socketPath := i.SocketPath
+	i.mu.Unlock()
+
 	var errs []error
-	if i.machine != nil {
-		if err := i.machine.StopVMM(); err != nil {
+	machineStopped := machine == nil
+	if machine != nil {
+		if err := machine.StopVMM(); err != nil {
 			errs = append(errs, fmt.Errorf("stop vmm: %w", err))
 		} else {
-			i.machine = nil
+			machineStopped = true
 		}
 	}
-	if i.network != nil {
-		if err := i.network.Release(ctx); err != nil {
+
+	networkReleased := false
+	if networkLease != nil {
+		if err := networkLease.Release(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("release network resources: %w", err))
+		} else {
+			networkReleased = true
 		}
 	}
-	if i.machine == nil {
-		if err := os.Remove(i.SocketPath); err != nil && !os.IsNotExist(err) {
+
+	socketRemoved := false
+	if machineStopped {
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, fmt.Errorf("remove socket: %w", err))
+		} else {
+			socketRemoved = true
 		}
 	}
-	if len(errs) > 0 || i.machine != nil {
+
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if machineStopped {
+		i.machine = nil
+	}
+	if len(errs) > 0 || !machineStopped || !networkReleased || !socketRemoved {
 		i.state = StateCleanupFailed
 		return fmt.Errorf("stop instance %s: %w", i.ID, errors.Join(errs...))
 	}
