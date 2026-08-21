@@ -7,17 +7,13 @@ Shiyao is a Go control plane for running AI-agent workloads inside isolated
 for Linux hosts that can provide KVM, VSOCK, TAP devices, nftables, and cgroup
 v2 controls.
 
-## The name
-
-**Shiyao (石爻)** combines two ideas that describe the project boundary:
-
-- **石 (Shí)** — stone or bedrock; the durable isolation boundary around an
-  untrusted workload.
-- **爻 (Yáo)** — the binary lines of the _I Ching_; the computational work
-  performed inside that boundary.
-
 ## What it provides
 
+- **Authentication** with user sessions and personal access tokens (PATs).
+- **Authorization foundation** for separating authenticated identity from
+  permissions and credential scopes.
+- **Sandbox lifecycle management** from the HTTP control plane through the VMM
+  to a running Firecracker microVM.
 - **Firecracker lifecycle management** for creating, starting, stopping, and
   snapshot-resuming microVMs.
 - **Isolated networking** using one TAP device per guest and a shared nftables
@@ -37,16 +33,93 @@ v2 controls.
 AI agent / application
         |
         v
-Shiyao control plane
+HTTP control plane
         |
-        +-- VMM admission gate ----> Firecracker microVM
+        +-- authn --------------------> authenticated principal
+        |
+        +-- authz --------------------> permission decision
+        |
+        +-- sandbox service ----------> lifecycle state in Postgres
+        |                                  |
+        |                                  v
+        |                              VMM manager
+        |                                  |
+        |                                  v
+        |                           Firecracker microVM
         |                                  |
         |                                  +-- guest agent over VSOCK
         |
         +-- shared nftables policy --> per-VM TAP interface
 ```
 
-### VM lifecycle
+Authentication and authorization are intentionally separate: `internal/authn`
+answers who is authenticated and which credential was used, while `internal/authz`
+decides what that principal is allowed to do. Teams and organizations are not
+required for the current user + PAT model.
+
+## API surface
+
+The daemon exposes the current API under `/v1`:
+
+```text
+POST   /v1/auth/start
+POST   /v1/auth/otp
+POST   /v1/auth/logout
+
+POST   /v1/tokens
+GET    /v1/tokens
+DELETE /v1/tokens/:id
+
+GET    /v1/sessions
+DELETE /v1/sessions/:id
+POST   /v1/sessions/revoke-all
+
+GET    /v1/users/me
+
+GET    /v1/sandboxes
+GET    /v1/sandboxes/:id
+POST   /v1/sandboxes
+DELETE /v1/sandboxes/:id
+GET    /v1/sandboxes/:id/exec/stream
+```
+
+Authenticated routes accept either the `shiyao-session` cookie or a `Bearer`
+personal access token. Sandbox execution requires the authenticated user to
+own the sandbox and the sandbox to be in the `running` state before the VSOCK
+connection is opened.
+
+## Personal access tokens
+
+PATs are long-lived API credentials for CLI, automation, and agent workloads.
+The raw token is returned only when the token is created; Shiyao stores a hash
+for later verification and exposes only token metadata and a short prefix after
+creation.
+
+The initial scope model includes:
+
+- `sandbox:read`
+- `sandbox:write`
+
+Credential authentication produces an `authn.Principal`; authorization remains
+a separate concern so the same identity model can later support teams,
+organizations, and service identities without changing the basic authn flow.
+
+## Sandbox lifecycle
+
+A sandbox is persisted in Postgres and driven through the VMM lifecycle:
+
+1. The control plane creates a sandbox record in `pending` state.
+2. The VMM allocates a guest subnet, VSOCK CID, TAP name, and Firecracker socket
+   path.
+3. Network resources are configured and Firecracker is configured and started.
+4. On success, the sandbox becomes `running` and records its start time.
+5. On provisioning failure, the control plane marks the sandbox `failed` while
+   the VMM performs its own best-effort cleanup.
+6. Deletion stops the VM and releases host resources before removing the
+   database record. Cleanup failures leave the sandbox in `cleanup_failed` for
+   recovery instead of losing the control-plane record.
+
+## VM lifecycle
 
 1. `Manager.ProvisionVM` obtains a bounded provisioning slot and allocates a
    guest subnet, VSOCK CID, TAP name, and Firecracker socket path.
@@ -75,9 +148,12 @@ the nftables transaction level.
 
 ## VSOCK execution protocol
 
-The host connects to the guest agent on VSOCK port `1024`. Requests include a
-protocol version, request ID, command, arguments, environment allowlist, and
-optional timeout.
+The host connects to the guest agent on VSOCK port `1024`. The host-side
+execution path is exposed through the sandbox WebSocket endpoint and then uses
+`internal/vsock.ExecStream` to bridge the request to the guest.
+
+Requests include a protocol version, request ID, command, arguments,
+environment allowlist, and optional timeout.
 
 - Requests are capped at 1 MiB.
 - Commands are limited to four concurrent executions per guest.
@@ -98,47 +174,46 @@ so callers can retry, shed load, or queue work outside the host control plane.
 never returned to the idle pool until its supplied reset operation succeeds; a
 reset failure stops and evicts it to avoid cross-tenant state reuse.
 
-## Benchmarking boot paths
+## Configuration
 
-`vmm.MeasureBoots` accepts cold-boot and snapshot-resume operations and returns
-their durations. Use it in a privileged integration benchmark with identical
-fixtures and a shared guest-readiness check to compare the two paths.
+The daemon reads configuration from environment variables (with `.env` loaded
+for local development).
 
-## Requirements
+Core services:
 
-- Go 1.26.6 or later (see `shiyao/go.mod`)
-- Linux with KVM access (`/dev/kvm`)
-- Firecracker for VM integration runs
-- nftables for guest network policy
-- cgroup v2 delegation for guest command resource-limit integration tests
-
-## Development
-
-```bash
-# Run formatting and unit tests.
-cd shiyao
-test -z "$(gofmt -l .)"
-go test -p 1 ./...
-
-# Build all command binaries.
-go build ./cmd/...
+```text
+DATABASE_URL
+REDIS_URL
+NATS_URL
 ```
 
-Guest sandbox integration tests require root and host kernel capabilities:
+Runtime middleware:
 
-```bash
-cd shiyao
-sudo -E "$(command -v go)" test -tags=integration ./cmd/guest-agent -v -count=1
+```text
+CORS_ORIGINS
+DEVELOPMENT
 ```
 
-Tests skip cgroup or OverlayFS assertions when the executing environment does
-not delegate the necessary kernel capabilities.
+Firecracker runtime:
 
-## Configuration (`shiyao.yaml`)
+```text
+VMM_KERNEL_PATH
+VMM_ROOTFS_PATH
+VMM_GUEST_AGENT_PATH      # default: /usr/local/bin/shiyao-agent
+VMM_VCPU_COUNT            # default: 2
+VMM_MEMORY_MB             # default: 512
+VMM_BOOT_ARGS             # default: console=ttyS0 reboot=k panic=1 pci=off
+VMM_UPLINK_INTERFACE      # default: eth0
+```
 
-`shiyao.yaml` is the declarative description of a reusable snapshot image. It
-defines the base runtime, language dependencies, resource envelope,
-environment, and outbound-network intent used when preparing a VM image.
+`VMM_KERNEL_PATH` and `VMM_ROOTFS_PATH` are required for cold-boot execution.
+The runtime validates the VMM and network configuration during daemon startup.
+
+## Snapshot configuration
+
+`shiyao.yaml` describes a reusable snapshot image. It defines the base runtime,
+language dependencies, resource envelope, environment, and outbound-network
+intent used when preparing a VM image.
 
 ```yaml
 version: "v1alpha1"
@@ -176,12 +251,47 @@ be positive, with at least 128 MiB of memory and a 1 GiB disk. Pin dependency
 versions where reproducibility matters. The runtime currently targets Linux
 on `x86_64`.
 
+## Benchmarking boot paths
+
+`vmm.MeasureBoots` accepts cold-boot and snapshot-resume operations and returns
+their durations. Use it in a privileged integration benchmark with identical
+fixtures and a shared guest-readiness check to compare the two paths.
+
+## Requirements
+
+- Go 1.26.6 or later (see `shiyao/go.mod`)
+- Linux with KVM access (`/dev/kvm`)
+- Firecracker for VM integration runs
+- nftables for guest network policy
+- cgroup v2 delegation for guest command resource-limit integration tests
+
+## Development
+
+```bash
+cd shiyao
+
+test -z "$(gofmt -l .)"
+go test -p 1 ./...
+go build ./cmd/...
+```
+
+Guest sandbox integration tests require root and host kernel capabilities:
+
+```bash
+cd shiyao
+sudo -E "$(command -v go)" test -tags=integration ./cmd/guest-agent -v -count=1
+```
+
+Tests skip cgroup or OverlayFS assertions when the executing environment does
+not delegate the necessary kernel capabilities.
+
 ## Status
 
-Shiyao is under active development. The networking, VSOCK, admission-control,
-and warm-pool components are implementation foundations; production deployments
-should run privileged integration tests against their target kernel, nftables,
-Firecracker, and cgroup configuration before accepting untrusted workloads.
+Shiyao is under active development. The control plane, authentication,
+networking, VSOCK, admission-control, sandbox lifecycle, and warm-pool
+components are implementation foundations. Production deployments should run
+privileged integration tests against their target kernel, nftables, Firecracker,
+and cgroup configuration before accepting untrusted workloads.
 
 ## License
 
