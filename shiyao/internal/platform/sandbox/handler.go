@@ -1,16 +1,13 @@
 package sandbox
 
 import (
-	"net/http"
-
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
+	"github.com/coffeyvidzro/shiyao/pkg/helper"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
-	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Handler struct {
@@ -122,17 +119,9 @@ func newResponse(sandbox sqlc.Sandbox) Response {
 		MemoryMB:       sandbox.MemoryMb,
 		TimeoutSeconds: sandbox.TimeoutSeconds,
 		AllowedHosts:   sandbox.AllowedHosts,
-		CreatedAt:      formatTime(sandbox.CreatedAt),
-		StartedAt:      formatTime(sandbox.StartedAt),
-		StoppedAt:      formatTime(sandbox.StoppedAt),
-		UpdatedAt:      formatTime(sandbox.UpdatedAt),
+		CreatedAt:      helper.FormatTime(sandbox.CreatedAt),
+		StartedAt:      helper.FormatTime(sandbox.StartedAt),
+		StoppedAt:      helper.FormatTime(sandbox.StoppedAt),
+		UpdatedAt:      helper.FormatTime(sandbox.UpdatedAt),
 	}
-}
-
-func formatTime(value pgtype.Timestamptz) string {
-	if !value.Valid {
-		return ""
-	}
-
-	return pgconv.TimestamptzToTime(value).Format(http.TimeFormat)
 }

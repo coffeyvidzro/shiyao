@@ -1,14 +1,11 @@
 package users
 
 import (
-	"net/http"
-
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
+	"github.com/coffeyvidzro/shiyao/pkg/helper"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
-	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Handler struct {
@@ -82,16 +79,7 @@ func newResponse(user sqlc.User) Response {
 		Email:         user.Email,
 		EmailVerified: user.EmailVerified,
 		Name:          user.Name,
-		CreatedAt:     formatTime(user.CreatedAt),
-		UpdatedAt:     formatTime(user.UpdatedAt),
+		CreatedAt:     helper.FormatTime(user.CreatedAt),
+		UpdatedAt:     helper.FormatTime(user.UpdatedAt),
 	}
-}
-
-func formatTime(value pgtype.Timestamptz) string {
-	t := pgconv.TimestamptzToTime(value)
-	if t.IsZero() {
-		return ""
-	}
-
-	return t.Format(http.TimeFormat)
 }
