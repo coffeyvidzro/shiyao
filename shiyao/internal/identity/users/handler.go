@@ -5,8 +5,8 @@ import (
 
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
-	"github.com/shiyao/shiyao/internal/identity/session"
-	apperrors "github.com/shiyao/shiyao/pkg/errors"
+	"github.com/coffeyvidzro/shiyao/internal/identity/session"
+	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/shiyao/shiyao/pkg/helper"
 	"github.com/shiyao/shiyao/pkg/httputil"
 )
