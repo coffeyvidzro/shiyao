@@ -1,11 +1,12 @@
 package pat
 
 import (
-	"github.com/coffeyvidzro/shiyao/internal/identity/session"
-	"github.com/coffeyvidzro/shiyao/pkg/errors"
-	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"github.com/coffeyvidzro/shiyao/internal/authn"
+	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
+	"github.com/shiyao/pkg/httputil"
 )
 
 type Handler struct {
@@ -17,15 +18,15 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) Create(c *gin.Context) {
-	userID, err := session.UserIDFromContext(c)
-	if err != nil {
-		httputil.Error(c, err)
+	userID, ok := authn.UserIDFromContext(c.Request.Context())
+	if !ok {
+		httputil.Error(c, apperrors.NewUnauthorized("authentication required"))
 		return
 	}
 
 	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		httputil.Error(c, errors.NewBadRequest("invalid request body"))
+		httputil.Error(c, apperrors.NewBadRequest("invalid request body"))
 		return
 	}
 
@@ -39,9 +40,9 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 func (h *Handler) List(c *gin.Context) {
-	userID, err := session.UserIDFromContext(c)
-	if err != nil {
-		httputil.Error(c, err)
+	userID, ok := authn.UserIDFromContext(c.Request.Context())
+	if !ok {
+		httputil.Error(c, apperrors.NewUnauthorized("authentication required"))
 		return
 	}
 
@@ -55,15 +56,15 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 func (h *Handler) Revoke(c *gin.Context) {
-	userID, err := session.UserIDFromContext(c)
-	if err != nil {
-		httputil.Error(c, err)
+	userID, ok := authn.UserIDFromContext(c.Request.Context())
+	if !ok {
+		httputil.Error(c, apperrors.NewUnauthorized("authentication required"))
 		return
 	}
 
 	tokenID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		httputil.Error(c, errors.NewBadRequest("invalid token ID"))
+		httputil.Error(c, apperrors.NewBadRequest("invalid token ID"))
 		return
 	}
 
