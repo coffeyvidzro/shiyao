@@ -5,12 +5,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
-	"github.com/shiyao/shiyao/internal/identity/pat"
 )
 
 const bearerScheme = "Bearer"
@@ -21,10 +19,7 @@ type Auth struct {
 }
 
 func NewAuth(sessions *session.Service, patResolver authn.Resolver) *Auth {
-	return &Auth{
-		sessions: sessions,
-		pat:      patResolver,
-	}
+	return &Auth{sessions: sessions, pat: patResolver}
 }
 
 func (a *Auth) Handler() gin.HandlerFunc {
@@ -87,14 +82,8 @@ func (a *Auth) resolveSession(c *gin.Context) (authn.Principal, bool) {
 	}
 
 	return authn.Principal{
-		Subject: authn.Subject{
-			ID:   sess.UserID,
-			Type: authn.SubjectUser,
-		},
-		Credential: authn.Credential{
-			ID:   sess.ID,
-			Type: authn.CredentialSession,
-		},
+		Subject: authn.Subject{ID: sess.UserID, Type: authn.SubjectUser},
+		Credential: authn.Credential{ID: sess.ID, Type: authn.CredentialSession},
 		Assurance: authn.AssuranceUnknown,
 	}, true
 }
@@ -108,5 +97,3 @@ func setPrincipal(c *gin.Context, principal authn.Principal) {
 		c.Set(session.ContextSessionID, principal.Credential.ID)
 	}
 }
-
-var _ = uuid.Nil
