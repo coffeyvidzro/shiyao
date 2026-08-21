@@ -15,7 +15,6 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
-	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
 )
 
 type Registry struct {
@@ -112,5 +111,3 @@ func (r *Registry) Close() {
 		r.DB.Close()
 	}
 }
-
-var _ = middleware.NewAuth
