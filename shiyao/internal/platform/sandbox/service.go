@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
-	"github.com/shiyao/internal/vsock"
+	"github.com/coffeyvidzro/shiyao/internal/vsock"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 )
 
@@ -34,7 +34,6 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]sqlc.Sandbox, e
 	if userID == uuid.Nil {
 		return nil, apperrors.NewUnauthorized("authentication required")
 	}
-
 	return s.repo.ListByUserID(ctx, userID)
 }
 
@@ -42,7 +41,6 @@ func (s *Service) Get(ctx context.Context, userID, sandboxID uuid.UUID) (sqlc.Sa
 	if userID == uuid.Nil {
 		return sqlc.Sandbox{}, apperrors.NewUnauthorized("authentication required")
 	}
-
 	if sandboxID == uuid.Nil {
 		return sqlc.Sandbox{}, apperrors.NewBadRequest("invalid sandbox ID")
 	}
@@ -51,11 +49,9 @@ func (s *Service) Get(ctx context.Context, userID, sandboxID uuid.UUID) (sqlc.Sa
 	if err != nil {
 		return sqlc.Sandbox{}, apperrors.NewNotFound("sandbox not found")
 	}
-
 	if sandbox.UserID != userID {
 		return sqlc.Sandbox{}, apperrors.NewNotFound("sandbox not found")
 	}
-
 	return sandbox, nil
 }
 
@@ -98,7 +94,6 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req CreateReques
 	if err != nil {
 		return sandbox, apperrors.NewInternal("sandbox started but status update failed", err)
 	}
-
 	return sandbox, nil
 }
 
@@ -125,11 +120,9 @@ func (s *Service) Delete(ctx context.Context, userID, sandboxID uuid.UUID) error
 	if _, err := s.repo.UpdateStatus(ctx, sandbox.ID, "stopped"); err != nil {
 		return apperrors.NewInternal("sandbox stopped but status update failed", err)
 	}
-
 	if err := s.repo.Delete(ctx, sandbox.ID); err != nil {
 		return apperrors.NewInternal("sandbox stopped but database cleanup failed", err)
 	}
-
 	return nil
 }
 
@@ -150,9 +143,7 @@ func validateCreateRequest(req CreateRequest) error {
 	return nil
 }
 
-func newVMID() string {
-	return "sbx-" + uuid.NewString()
-}
+func newVMID() string { return "sbx-" + uuid.NewString() }
 
 func socketPathForSandbox(sandboxID string) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("firecracker-%s.sock", sandboxID))
