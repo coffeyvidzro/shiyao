@@ -1,11 +1,13 @@
 package users
 
 import (
-	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
-	"github.com/coffeyvidzro/shiyao/internal/identity/session"
-	"github.com/coffeyvidzro/shiyao/pkg/helper"
-	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 	"github.com/gin-gonic/gin"
+
+	"github.com/shiyao/shiyao/internal/authn"
+	"github.com/shiyao/shiyao/internal/database/sqlc"
+	"github.com/shiyao/shiyao/internal/identity/session"
+	"github.com/shiyao/shiyao/pkg/helper"
+	"github.com/shiyao/shiyao/pkg/httputil"
 )
 
 type Handler struct {
@@ -13,15 +15,13 @@ type Handler struct {
 }
 
 func NewHandler(service *Service) *Handler {
-	return &Handler{
-		service: service,
-	}
+	return &Handler{service: service}
 }
 
 func (h *Handler) GetMe(c *gin.Context) {
-	userID, err := session.UserIDFromContext(c)
-	if err != nil {
-		httputil.Error(c, err)
+	userID, ok := authn.UserIDFromContext(c.Request.Context())
+	if !ok {
+		httputil.Error(c, httputil.Unauthorized("authentication required"))
 		return
 	}
 
@@ -41,9 +41,9 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	userID, err := session.UserIDFromContext(c)
-	if err != nil {
-		httputil.Error(c, err)
+	userID, ok := authn.UserIDFromContext(c.Request.Context())
+	if !ok {
+		httputil.Error(c, httputil.Unauthorized("authentication required"))
 		return
 	}
 
@@ -57,9 +57,9 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 }
 
 func (h *Handler) DeleteMe(c *gin.Context) {
-	userID, err := session.UserIDFromContext(c)
-	if err != nil {
-		httputil.Error(c, err)
+	userID, ok := authn.UserIDFromContext(c.Request.Context())
+	if !ok {
+		httputil.Error(c, httputil.Unauthorized("authentication required"))
 		return
 	}
 
