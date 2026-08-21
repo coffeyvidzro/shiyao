@@ -6,6 +6,7 @@ import (
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
+	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -116,8 +117,9 @@ func newResponse(sess sqlc.Session) Response {
 	return Response{ID: sess.ID, UserID: sess.UserID, IPAddress: ip, UserAgent: sess.UserAgent, ExpiresAt: formatTime(sess.ExpiresAt), LastSeenAt: formatTime(sess.LastSeenAt), CreatedAt: formatTime(sess.CreatedAt)}
 }
 func formatTime(value pgtype.Timestamptz) string {
-	if !value.Valid || value.Time.IsZero() {
+	t := pgconv.TimestamptzToTime(value)
+	if t.IsZero() {
 		return ""
 	}
-	return value.Time.Format(http.TimeFormat)
+	return t.Format(http.TimeFormat)
 }

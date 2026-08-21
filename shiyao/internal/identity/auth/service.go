@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
+	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/argon2"
 )
@@ -77,7 +78,7 @@ func (s *Service) Start(
 		sqlc.CreateAuthTransactionParams{
 			UserID:     &user.ID,
 			Identifier: email,
-			ExpiresAt:  time.Now().Add(authTransactionTTL),
+			ExpiresAt:  pgconv.NullableTimestamptz(timePtr(time.Now().Add(authTransactionTTL))),
 		},
 	)
 	if err != nil {
@@ -108,8 +109,8 @@ func (s *Service) LoginWithPassword(
 		return sqlc.User{}, ErrInvalidTransaction
 	}
 
-	if transaction.ExpiresAt.Before(time.Now()) {
-		_, _ = s.repo.ExpireAuthTransaction(ctx, transactionID)
+	if pgconv.TimestamptzToTime(transaction.ExpiresAt).Before(time.Now()) {
+		_ = s.repo.ExpireAuthTransaction(ctx, transactionID)
 		return sqlc.User{}, ErrTransactionExpired
 	}
 
@@ -122,7 +123,7 @@ func (s *Service) LoginWithPassword(
 		return sqlc.User{}, ErrInvalidCredentials
 	}
 
-	if user.DisabledAt != nil {
+	if user.DisabledAt.Valid {
 		return sqlc.User{}, ErrUserDisabled
 	}
 
@@ -191,8 +192,8 @@ func (s *Service) SendOTP(
 		return "", ErrInvalidTransaction
 	}
 
-	if transaction.ExpiresAt.Before(time.Now()) {
-		_, _ = s.repo.ExpireAuthTransaction(ctx, transactionID)
+	if pgconv.TimestamptzToTime(transaction.ExpiresAt).Before(time.Now()) {
+		_ = s.repo.ExpireAuthTransaction(ctx, transactionID)
 		return "", ErrTransactionExpired
 	}
 
@@ -206,10 +207,12 @@ func (s *Service) SendOTP(
 	challenge, err := s.repo.CreateAuthChallenge(
 		ctx,
 		sqlc.CreateAuthChallengeParams{
-			Identifier: transaction.Identifier,
-			TokenHash:  tokenHash,
-			ExpiresAt:  time.Now().Add(authChallengeTTL),
-			Purpose:    "otp",
+			Identifier:        transaction.Identifier,
+			SecretHash:        tokenHash,
+			ExpiresAt:         pgconv.NullableTimestamptz(timePtr(time.Now().Add(authChallengeTTL))),
+			Purpose:           "otp",
+			AuthTransactionID: &transactionID,
+			MaxAttempts:       otpMaxAttempts,
 		},
 	)
 	if err != nil {
@@ -245,27 +248,27 @@ func (s *Service) VerifyOTP(
 		return sqlc.User{}, ErrInvalidTransaction
 	}
 
-	if transaction.ExpiresAt.Before(time.Now()) {
-		_, _ = s.repo.ExpireAuthTransaction(ctx, transactionID)
+	if pgconv.TimestamptzToTime(transaction.ExpiresAt).Before(time.Now()) {
+		_ = s.repo.ExpireAuthTransaction(ctx, transactionID)
 		return sqlc.User{}, ErrTransactionExpired
 	}
 
 	challenge, err := s.repo.GetActiveAuthChallenge(
 		ctx,
 		sqlc.GetActiveAuthChallengeParams{
-			Identifier: transaction.Identifier,
-			Purpose:    "otp",
+			AuthTransactionID: &transactionID,
+			Purpose:           "otp",
 		},
 	)
 	if err != nil {
 		return sqlc.User{}, ErrInvalidChallenge
 	}
 
-	if challenge.ExpiresAt.Before(time.Now()) {
+	if pgconv.TimestamptzToTime(challenge.ExpiresAt).Before(time.Now()) {
 		return sqlc.User{}, ErrChallengeExpired
 	}
 
-	if challenge.ConsumedAt != nil {
+	if challenge.ConsumedAt.Valid {
 		return sqlc.User{}, ErrChallengeConsumed
 	}
 
@@ -273,7 +276,7 @@ func (s *Service) VerifyOTP(
 		return sqlc.User{}, ErrTooManyAttempts
 	}
 
-	if hashToken(code) != challenge.TokenHash {
+	if hashToken(code) != challenge.SecretHash {
 		_, _ = s.repo.IncrementAuthChallengeAttempts(
 			ctx,
 			challenge.ID,
@@ -316,7 +319,7 @@ func (s *Service) VerifyOTP(
 		}
 	}
 
-	if user.DisabledAt != nil {
+	if user.DisabledAt.Valid {
 		return sqlc.User{}, ErrUserDisabled
 	}
 
@@ -416,6 +419,10 @@ func (s *Service) DeleteOAuthAccount(
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+
+func timePtr(value time.Time) *time.Time {
+	return &value
+}
 
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))

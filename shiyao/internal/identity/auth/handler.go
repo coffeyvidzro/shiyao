@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 )
 
@@ -358,27 +359,9 @@ func authenticationMethods(
 // instead.
 
 func NewBadRequestError(message string) error {
-	return &APIError{
-		Status:  http.StatusBadRequest,
-		Code:    "BAD_REQUEST",
-		Message: message,
-	}
+	return apperrors.NewBadRequest(message)
 }
 
 func NewUnauthorizedError(message string) error {
-	return &APIError{
-		Status:  http.StatusUnauthorized,
-		Code:    "UNAUTHORIZED",
-		Message: message,
-	}
-}
-
-type APIError struct {
-	Status  int
-	Code    string
-	Message string
-}
-
-func (e *APIError) Error() string {
-	return e.Message
+	return apperrors.NewUnauthorized(message)
 }

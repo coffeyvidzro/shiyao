@@ -1,20 +1,11 @@
 package session
 
-import (
-	"net/http"
-)
+import apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 
 func NewBadRequestError(message string) error {
-	return &APIError{Status: http.StatusBadRequest, Code: "BAD_REQUEST", Message: message}
+	return apperrors.NewBadRequest(message)
 }
+
 func NewUnauthorizedError(message string) error {
-	return &APIError{Status: http.StatusUnauthorized, Code: "UNAUTHORIZED", Message: message}
+	return apperrors.NewUnauthorized(message)
 }
-
-type APIError struct {
-	Status  int
-	Code    string
-	Message string
-}
-
-func (e *APIError) Error() string { return e.Message }

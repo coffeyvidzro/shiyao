@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
+	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const TTL = 30 * 24 * time.Hour
@@ -32,7 +32,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, ipAddress *strin
 			ip = &parsed
 		}
 	}
-	sess, err := s.repo.Create(ctx, sqlc.CreateSessionParams{TokenHash: hashToken(token), IpAddress: ip, UserAgent: userAgent, ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true}, UserID: userID})
+	sess, err := s.repo.Create(ctx, sqlc.CreateSessionParams{TokenHash: hashToken(token), IpAddress: ip, UserAgent: userAgent, ExpiresAt: pgconv.NullableTimestamptz(&expiresAt), UserID: userID})
 	if err != nil {
 		return "", sqlc.Session{}, err
 	}
