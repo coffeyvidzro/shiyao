@@ -7,9 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
+	"github.com/coffeyvidzro/shiyao/internal/authn"
+	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 )
 
 const (
@@ -18,7 +19,7 @@ const (
 )
 
 var (
-	ErrInvalidToken = errors.New("invalid personal access token")
+	ErrInvalidToken  = errors.New("invalid personal access token")
 	ErrTokenNotFound = errors.New("personal access token not found")
 )
 
@@ -32,13 +33,9 @@ func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) Create(
-	ctx context.Context,
-	userID uuid.UUID,
-	req CreateRequest,
-) (CreateResponse, error) {
+func (s *Service) Create(ctx context.Context, userID uuid.UUID, req CreateRequest) (CreateResponse, error) {
 	if userID == uuid.Nil {
-		return CreateResponse{}, ErrInvalidToken
+		return CreateResponse{}, ErrTokenNotFound
 	}
 	if err := ValidateCreateRequest(req); err != nil {
 		return CreateResponse{}, err
@@ -49,28 +46,24 @@ func (s *Service) Create(
 		return CreateResponse{}, err
 	}
 
-	scopes := normalizeScopes(req.Scopes)
 	created, err := s.repo.Create(ctx, sqlc.CreateTokenParams{
-		UserID:    userID,
-		Name:      strings.TrimSpace(req.Name),
-		TokenHash: hashToken(token),
+		UserID:      userID,
+		Name:        strings.TrimSpace(req.Name),
+		TokenHash:   hashToken(token),
 		TokenPrefix: tokenPrefixValue(token),
-		Scopes:    scopes,
-		ExpiresAt: req.ExpiresAt,
+		Scopes:      normalizeScopes(req.Scopes),
+		ExpiresAt:   req.ExpiresAt,
 	})
 	if err != nil {
 		return CreateResponse{}, err
 	}
 
-	return CreateResponse{
-		Response: responseFromRow(created),
-		Token:    token,
-	}, nil
+	return CreateResponse{Response: responseFromRow(created), Token: token}, nil
 }
 
 func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]Response, error) {
 	if userID == uuid.Nil {
-		return nil, ErrInvalidToken
+		return nil, ErrTokenNotFound
 	}
 
 	rows, err := s.repo.ListByUser(ctx, userID)
@@ -82,7 +75,6 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]Response, error
 	for _, row := range rows {
 		items = append(items, responseFromListRow(row))
 	}
-
 	return items, nil
 }
 
@@ -90,25 +82,34 @@ func (s *Service) Revoke(ctx context.Context, userID, tokenID uuid.UUID) error {
 	if userID == uuid.Nil || tokenID == uuid.Nil {
 		return ErrTokenNotFound
 	}
-
 	return s.repo.Revoke(ctx, tokenID, userID)
 }
 
-func (s *Service) Resolve(ctx context.Context, token string) (uuid.UUID, uuid.UUID, error) {
+func (s *Service) Resolve(ctx context.Context, token string) (authn.Principal, error) {
 	if strings.TrimSpace(token) == "" {
-		return uuid.Nil, uuid.Nil, ErrInvalidToken
+		return authn.Principal{}, authn.ErrInvalidCredential
 	}
 
 	row, err := s.repo.GetByHash(ctx, hashToken(token))
 	if err != nil {
-		return uuid.Nil, uuid.Nil, ErrInvalidToken
+		return authn.Principal{}, authn.ErrInvalidCredential
 	}
-
 	if err := s.repo.Touch(ctx, row.ID); err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return authn.Principal{}, err
 	}
 
-	return row.UserID, row.ID, nil
+	return authn.Principal{
+		Subject: authn.Subject{ID: row.UserID, Type: authn.SubjectUser},
+		Credential: authn.Credential{ID: row.ID, Type: authn.CredentialPAT},
+		Assurance: authn.AssuranceUnknown,
+	}, nil
+}
+
+func (s *Service) ResolveCredential(ctx context.Context, input authn.CredentialInput) (authn.Principal, error) {
+	if input.Type != authn.CredentialPAT {
+		return authn.Principal{}, authn.ErrInvalidCredential
+	}
+	return s.Resolve(ctx, input.Value)
 }
 
 func generateToken() (string, error) {
@@ -144,19 +145,9 @@ func normalizeScopes(scopes []string) []string {
 }
 
 func responseFromRow(row sqlc.PersonalAccessToken) Response {
-	return Response{
-		ID: row.ID, Name: row.Name, Prefix: row.TokenPrefix,
-		Scopes: row.Scopes, ExpiresAt: row.ExpiresAt,
-		LastUsedAt: row.LastUsedAt, CreatedAt: row.CreatedAt,
-	}
+	return Response{ID: row.ID, Name: row.Name, Prefix: row.TokenPrefix, Scopes: row.Scopes, ExpiresAt: row.ExpiresAt, LastUsedAt: row.LastUsedAt, CreatedAt: row.CreatedAt}
 }
 
 func responseFromListRow(row sqlc.ListTokensByUserRow) Response {
-	return Response{
-		ID: row.ID, Name: row.Name, Prefix: row.TokenPrefix,
-		Scopes: row.Scopes, ExpiresAt: row.ExpiresAt,
-		LastUsedAt: row.LastUsedAt, CreatedAt: row.CreatedAt,
-	}
+	return Response{ID: row.ID, Name: row.Name, Prefix: row.TokenPrefix, Scopes: row.Scopes, ExpiresAt: row.ExpiresAt, LastUsedAt: row.LastUsedAt, CreatedAt: row.CreatedAt}
 }
-
-var _ = time.Time{}
