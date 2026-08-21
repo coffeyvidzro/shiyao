@@ -31,7 +31,7 @@ func (h *Handler) Start(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httputil.Error(
 			c,
-			NewBadRequestError("invalid request body"),
+			apperrors.NewBadRequest("invalid request body"),
 		)
 		return
 	}
@@ -59,7 +59,7 @@ func (h *Handler) LoginWithPassword(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httputil.Error(
 			c,
-			NewBadRequestError("invalid request body"),
+			apperrors.NewBadRequest("invalid request body"),
 		)
 		return
 	}
@@ -68,7 +68,7 @@ func (h *Handler) LoginWithPassword(c *gin.Context) {
 	if err != nil {
 		httputil.Error(
 			c,
-			NewBadRequestError("invalid transaction_id"),
+			apperrors.NewBadRequest("invalid transaction_id"),
 		)
 		return
 	}
@@ -112,7 +112,7 @@ func (h *Handler) SendOTP(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httputil.Error(
 			c,
-			NewBadRequestError("invalid request body"),
+			apperrors.NewBadRequest("invalid request body"),
 		)
 		return
 	}
@@ -121,7 +121,7 @@ func (h *Handler) SendOTP(c *gin.Context) {
 	if err != nil {
 		httputil.Error(
 			c,
-			NewBadRequestError("invalid transaction_id"),
+			apperrors.NewBadRequest("invalid transaction_id"),
 		)
 		return
 	}
@@ -146,7 +146,7 @@ func (h *Handler) VerifyOTP(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httputil.Error(
 			c,
-			NewBadRequestError("invalid request body"),
+			apperrors.NewBadRequest("invalid request body"),
 		)
 		return
 	}
@@ -155,7 +155,7 @@ func (h *Handler) VerifyOTP(c *gin.Context) {
 	if err != nil {
 		httputil.Error(
 			c,
-			NewBadRequestError("invalid transaction_id"),
+			apperrors.NewBadRequest("invalid transaction_id"),
 		)
 		return
 	}
@@ -201,7 +201,7 @@ func (h *Handler) SetPassword(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httputil.Error(
 			c,
-			NewBadRequestError("invalid request body"),
+			apperrors.NewBadRequest("invalid request body"),
 		)
 		return
 	}
@@ -259,12 +259,4 @@ func authenticationMethods(
 		"password",
 		"otp",
 	}
-}
-
-func NewBadRequestError(message string) error {
-	return apperrors.NewBadRequest(message)
-}
-
-func NewUnauthorizedError(message string) error {
-	return apperrors.NewUnauthorized(message)
 }
