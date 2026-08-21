@@ -7,7 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/coffeyvidzro/shiyao/internal/adapters/redis"
 	"github.com/coffeyvidzro/shiyao/internal/config"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
@@ -19,6 +18,7 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
 	"github.com/coffeyvidzro/shiyao/internal/vmm"
 	"github.com/coffeyvidzro/shiyao/internal/vsock"
+	"github.com/redis/go-redis/v9"
 )
 
 type Registry struct {
@@ -74,7 +74,7 @@ func NewModules(
 	sessionService := session.NewService(sessionRepository)
 
 	authRepository := auth.NewRepository(queries)
-	authService := auth.NewService(authRepository, sessionService)
+	authService := auth.NewService(authRepository)
 
 	patRepository := pat.NewRepository(queries)
 	patService := pat.NewService(patRepository)

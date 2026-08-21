@@ -71,8 +71,8 @@ func TestFakeVMManagerPropagatesErrors(t *testing.T) {
 
 func TestSandboxResponseStatusValues(t *testing.T) {
 	for _, status := range []string{"pending", "running", "failed", "stopped", "cleanup_failed"} {
-		row := sqlc.Sandbox{Status: &status}
-		if row.Status == nil || *row.Status != status {
+		row := sqlc.Sandbox{Status: status}
+		if row.Status != status {
 			t.Fatalf("unexpected status %q", status)
 		}
 	}

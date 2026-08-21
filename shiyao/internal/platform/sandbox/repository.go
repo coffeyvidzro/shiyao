@@ -43,7 +43,7 @@ func (r *Repository) UpdateStatus(
 ) (sqlc.Sandbox, error) {
 	return r.q.UpdateSandboxStatus(ctx, sqlc.UpdateSandboxStatusParams{
 		ID:     id,
-		Status: &status,
+		Status: status,
 	})
 }
 

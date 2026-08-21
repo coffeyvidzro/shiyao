@@ -7,10 +7,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"time"
 
-	"github.com/google/uuid"
 	"github.com/coffeyvidzro/shiyao/internal/authn"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
+	"github.com/coffeyvidzro/shiyao/pkg/pgconv"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -52,7 +55,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req CreateReques
 		TokenHash:   hashToken(token),
 		TokenPrefix: tokenPrefixValue(token),
 		Scopes:      normalizeScopes(req.Scopes),
-		ExpiresAt:   req.ExpiresAt,
+		ExpiresAt:   pgconv.NullableTimestamptz(req.ExpiresAt),
 	})
 	if err != nil {
 		return CreateResponse{}, err
@@ -99,9 +102,9 @@ func (s *Service) Resolve(ctx context.Context, input authn.CredentialInput) (aut
 	}
 
 	return authn.Principal{
-		Subject: authn.Subject{ID: row.UserID, Type: authn.SubjectUser},
+		Subject:    authn.Subject{ID: row.UserID, Type: authn.SubjectUser},
 		Credential: authn.Credential{ID: row.ID, Type: authn.CredentialPAT},
-		Assurance: authn.AssuranceUnknown,
+		Assurance:  authn.AssuranceUnknown,
 	}, nil
 }
 
@@ -138,11 +141,34 @@ func normalizeScopes(scopes []string) []string {
 }
 
 func responseFromRow(row sqlc.PersonalAccessToken) Response {
-	return Response{ID: row.ID, Name: row.Name, Prefix: row.TokenPrefix, Scopes: row.Scopes, ExpiresAt: row.ExpiresAt, LastUsedAt: row.LastUsedAt, CreatedAt: row.CreatedAt}
+	return Response{
+		ID:         row.ID,
+		Name:       row.Name,
+		Prefix:     row.TokenPrefix,
+		Scopes:     row.Scopes,
+		ExpiresAt:  pgconv.TimestamptzToTimePtr(row.ExpiresAt),
+		LastUsedAt: pgconv.TimestamptzToTimePtr(row.LastUsedAt),
+		CreatedAt:  timeFromTimestamptz(row.CreatedAt),
+	}
 }
 
 func responseFromListRow(row sqlc.ListTokensByUserRow) Response {
-	return Response{ID: row.ID, Name: row.Name, Prefix: row.TokenPrefix, Scopes: row.Scopes, ExpiresAt: row.ExpiresAt, LastUsedAt: row.LastUsedAt, CreatedAt: row.CreatedAt}
+	return Response{
+		ID:         row.ID,
+		Name:       row.Name,
+		Prefix:     row.TokenPrefix,
+		Scopes:     row.Scopes,
+		ExpiresAt:  pgconv.TimestamptzToTimePtr(row.ExpiresAt),
+		LastUsedAt: pgconv.TimestamptzToTimePtr(row.LastUsedAt),
+		CreatedAt:  timeFromTimestamptz(row.CreatedAt),
+	}
+}
+
+func timeFromTimestamptz(value pgtype.Timestamptz) time.Time {
+	if !value.Valid {
+		return time.Time{}
+	}
+	return value.Time
 }
 
 var _ authn.Resolver = (*Service)(nil)

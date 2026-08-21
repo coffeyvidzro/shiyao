@@ -8,8 +8,8 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	ws "github.com/coffeyvidzro/shiyao/internal/websocket"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
-	"github.com/shiyao/pkg/helper"
-	"github.com/shiyao/pkg/httputil"
+	"github.com/coffeyvidzro/shiyao/pkg/helper"
+	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 )
 
 type Handler struct {
@@ -146,7 +146,7 @@ func newResponse(sandbox sqlc.Sandbox) Response {
 	return Response{
 		ID:             sandbox.ID,
 		UserID:         sandbox.UserID,
-		VMID:           sandbox.VmId,
+		VMID:           sandbox.VmID,
 		Template:       sandbox.Template,
 		Status:         sandbox.Status,
 		VCPU:           sandbox.Vcpu,

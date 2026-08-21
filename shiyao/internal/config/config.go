@@ -21,7 +21,7 @@ type Config struct {
 	VMMVCPUCount       int      `env:"VMM_VCPU_COUNT" envDefault:"2"`
 	VMMMemoryMB        int      `env:"VMM_MEMORY_MB" envDefault:"512"`
 	VMMBootArgs        string   `env:"VMM_BOOT_ARGS" envDefault:"console=ttyS0 reboot=k panic=1 pci=off"`
-	VMMUplinkInterface  string   `env:"VMM_UPLINK_INTERFACE" envDefault:"eth0"`
+	VMMUplinkInterface string   `env:"VMM_UPLINK_INTERFACE" envDefault:"eth0"`
 }
 
 func Load() (Config, error) {

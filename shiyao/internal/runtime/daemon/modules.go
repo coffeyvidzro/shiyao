@@ -45,5 +45,5 @@ type SandboxModule struct {
 	Repository *sandbox.Repository
 	Service    *sandbox.Service
 	Handler    *sandbox.Handler
-	VMM       *vmm.Manager
+	VMM        *vmm.Manager
 }

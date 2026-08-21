@@ -152,11 +152,12 @@ func (q *Queries) RevokeToken(ctx context.Context, arg RevokeTokenParams) error 
 const touchToken = `-- name: TouchToken :exec
 UPDATE personal_access_tokens
 SET last_used_at = NOW()
-WHERE last_used_at IS NULL
-   OR last_used_at < NOW() - INTERVAL '1 minute'
+WHERE id = $1
+  AND (last_used_at IS NULL
+       OR last_used_at < NOW() - INTERVAL '1 minute')
 `
 
-func (q *Queries) TouchToken(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, touchToken)
+func (q *Queries) TouchToken(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, touchToken, id)
 	return err
 }
