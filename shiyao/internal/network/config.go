@@ -35,9 +35,15 @@ func (n *Config) Validate() error {
 	if hostIP == nil {
 		return fmt.Errorf("invalid host IP %q", n.HostIP)
 	}
+	if hostIP.To4() == nil {
+		return fmt.Errorf("IPv6 host IP %q is unsupported", n.HostIP)
+	}
 	guestIP, guestNet, err := net.ParseCIDR(n.GuestIP)
 	if err != nil {
 		return fmt.Errorf("invalid guest IP/CIDR %q: %w", n.GuestIP, err)
+	}
+	if guestIP.To4() == nil {
+		return fmt.Errorf("IPv6 guest IP %q is unsupported", n.GuestIP)
 	}
 	if !guestNet.Contains(guestIP) {
 		return fmt.Errorf("guest IP %q is not valid for network %q", guestIP, guestNet)
