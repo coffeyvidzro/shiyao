@@ -6,6 +6,7 @@ const (
 	StateCreated State = iota
 	StateConfiguring
 	StateConfigured
+	StateStarting
 	StateRunning
 	StateStopping
 	StateStopped
@@ -20,6 +21,8 @@ func (s State) String() string {
 		return "configuring"
 	case StateConfigured:
 		return "configured"
+	case StateStarting:
+		return "starting"
 	case StateRunning:
 		return "running"
 	case StateStopping:

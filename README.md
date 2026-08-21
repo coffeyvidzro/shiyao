@@ -13,10 +13,8 @@ v2 controls.
 
 - **石 (Shí)** — stone or bedrock; the durable isolation boundary around an
   untrusted workload.
-- **爻 (Yáo)** — the binary lines of the *I Ching*; the computational work
+- **爻 (Yáo)** — the binary lines of the _I Ching_; the computational work
   performed inside that boundary.
-
-The goal is a strong, reviewable execution boundary for AI-generated code.
 
 ## What it provides
 
@@ -148,29 +146,29 @@ name: python-agent
 description: Python environment for an AI coding agent
 
 runtime:
-  os: linux
-  distro: ubuntu-22.04
-  architecture: x86_64
+    os: linux
+    distro: ubuntu-22.04
+    architecture: x86_64
 
 language:
-  name: python
-  version: "3.11"
+    name: python
+    version: "3.11"
 
 dependencies:
-  system: [curl, git]
-  pip: [requests]
+    system: [curl, git]
+    pip: [requests]
 
 resources:
-  vcpu: 2
-  memory_mb: 512
-  disk_mb: 1024
+    vcpu: 2
+    memory_mb: 512
+    disk_mb: 1024
 
 env:
-  PYTHONUNBUFFERED: "1"
+    PYTHONUNBUFFERED: "1"
 
 network:
-  allowed_domains: [api.openai.com]
-  block_private_ips: true
+    allowed_domains: [api.openai.com]
+    block_private_ips: true
 ```
 
 Required resource values are `vcpu`, `memory_mb`, and `disk_mb`; values must
