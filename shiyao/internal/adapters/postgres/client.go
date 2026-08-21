@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	postgresMaxConns       = 20
-	postgresMinConns       = 5
-	postgresMaxConnIdle    = 30 * time.Minute
+	postgresMaxConns        = 20
+	postgresMinConns        = 5
+	postgresMaxConnIdle     = 30 * time.Minute
 	postgresMaxConnLifetime = 1 * time.Hour
 )
 
