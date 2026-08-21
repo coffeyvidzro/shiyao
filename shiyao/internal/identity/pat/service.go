@@ -85,12 +85,12 @@ func (s *Service) Revoke(ctx context.Context, userID, tokenID uuid.UUID) error {
 	return s.repo.Revoke(ctx, tokenID, userID)
 }
 
-func (s *Service) Resolve(ctx context.Context, token string) (authn.Principal, error) {
-	if strings.TrimSpace(token) == "" {
+func (s *Service) Resolve(ctx context.Context, input authn.CredentialInput) (authn.Principal, error) {
+	if input.Type != authn.CredentialPAT || strings.TrimSpace(input.Value) == "" {
 		return authn.Principal{}, authn.ErrInvalidCredential
 	}
 
-	row, err := s.repo.GetByHash(ctx, hashToken(token))
+	row, err := s.repo.GetByHash(ctx, hashToken(input.Value))
 	if err != nil {
 		return authn.Principal{}, authn.ErrInvalidCredential
 	}
@@ -103,13 +103,6 @@ func (s *Service) Resolve(ctx context.Context, token string) (authn.Principal, e
 		Credential: authn.Credential{ID: row.ID, Type: authn.CredentialPAT},
 		Assurance: authn.AssuranceUnknown,
 	}, nil
-}
-
-func (s *Service) ResolveCredential(ctx context.Context, input authn.CredentialInput) (authn.Principal, error) {
-	if input.Type != authn.CredentialPAT {
-		return authn.Principal{}, authn.ErrInvalidCredential
-	}
-	return s.Resolve(ctx, input.Value)
 }
 
 func generateToken() (string, error) {
@@ -151,3 +144,5 @@ func responseFromRow(row sqlc.PersonalAccessToken) Response {
 func responseFromListRow(row sqlc.ListTokensByUserRow) Response {
 	return Response{ID: row.ID, Name: row.Name, Prefix: row.TokenPrefix, Scopes: row.Scopes, ExpiresAt: row.ExpiresAt, LastUsedAt: row.LastUsedAt, CreatedAt: row.CreatedAt}
 }
+
+var _ authn.Resolver = (*Service)(nil)
