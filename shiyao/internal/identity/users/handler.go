@@ -7,8 +7,8 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
-	"github.com/shiyao/shiyao/pkg/helper"
-	"github.com/shiyao/shiyao/pkg/httputil"
+	"github.com/coffeyvidzro/shiyao/pkg/helper"
+	"github.com/coffeyvidzro/shiyao/pkg/httputil"
 )
 
 type Handler struct {
