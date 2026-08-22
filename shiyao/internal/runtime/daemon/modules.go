@@ -4,16 +4,24 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
 	"github.com/coffeyvidzro/shiyao/internal/identity/pat"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
+	"github.com/coffeyvidzro/shiyao/internal/identity/teamtoken"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
 )
 
 type Modules struct {
-	Auth    AuthModule
-	PAT     PATModule
-	Session SessionModule
-	Users   UserModule
-	Sandbox SandboxModule
+	Auth      AuthModule
+	PAT       PATModule
+	TeamToken TeamTokenModule
+	Session   SessionModule
+	Users     UserModule
+	Sandbox   SandboxModule
+}
+
+type TeamTokenModule struct {
+	Repository *teamtoken.Repository
+	Service    *teamtoken.Service
+	Handler    *teamtoken.Handler
 }
 
 type AuthModule struct {
