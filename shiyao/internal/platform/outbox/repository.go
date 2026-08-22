@@ -48,10 +48,7 @@ func (r *PostgresRepository) Insert(ctx context.Context, event Event) error {
 	if event.AggregateID == uuid.Nil {
 		return fmt.Errorf("outbox aggregate ID is required")
 	}
-	if event.Payload == nil {
-		return fmt.Errorf("outbox payload is required")
-	}
-	if !json.Valid(event.Payload) {
+	if event.Payload == nil || !json.Valid(event.Payload) {
 		return fmt.Errorf("outbox payload must be valid JSON")
 	}
 
@@ -105,7 +102,7 @@ func (r *PostgresRepository) Claim(ctx context.Context, limit int, owner string,
 			LIMIT $1
 		), claimed AS (
 			UPDATE outbox_events o
-			SET locked_at = now() + $2::interval,
+			SET locked_at = now() + ($2::bigint * interval '1 millisecond'),
 			    locked_by = $3,
 			    attempts = o.attempts + 1,
 			    updated_at = now()
@@ -119,7 +116,7 @@ func (r *PostgresRepository) Claim(ctx context.Context, limit int, owner string,
 		       available_at, attempts, publish_failures, created_at
 		FROM claimed
 		ORDER BY available_at ASC, created_at ASC
-	`, limit, fmt.Sprintf("%d seconds", int(lease/time.Second)), owner)
+	`, limit, lease.Milliseconds(), owner)
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox events: %w", err)
 	}
@@ -139,9 +136,7 @@ func (r *PostgresRepository) MarkPublished(ctx context.Context, id uuid.UUID, ow
 	result, err := r.pool.Exec(ctx, `
 		UPDATE outbox_events
 		SET published_at = now(), locked_at = NULL, locked_by = NULL, updated_at = now()
-		WHERE id = $1
-		  AND published_at IS NULL
-		  AND locked_by = $2
+		WHERE id = $1 AND published_at IS NULL AND locked_by = $2
 	`, id, owner)
 	if err != nil {
 		return fmt.Errorf("mark outbox event %s published: %w", id, err)
@@ -161,10 +156,7 @@ func (r *PostgresRepository) MarkRetry(ctx context.Context, id uuid.UUID, owner 
 		    locked_at = NULL,
 		    locked_by = NULL,
 		    updated_at = now()
-		WHERE id = $1
-		  AND published_at IS NULL
-		  AND quarantined_at IS NULL
-		  AND locked_by = $2
+		WHERE id = $1 AND published_at IS NULL AND quarantined_at IS NULL AND locked_by = $2
 	`, id, owner, availableAt, formatFailure(code, reason))
 	if err != nil {
 		return fmt.Errorf("mark outbox event %s retryable: %w", id, err)
@@ -176,20 +168,15 @@ func (r *PostgresRepository) MarkRetry(ctx context.Context, id uuid.UUID, owner 
 }
 
 func (r *PostgresRepository) Quarantine(ctx context.Context, id uuid.UUID, owner, code, reason string) error {
+	if strings.TrimSpace(code) == "" || strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("quarantine code and reason are required")
+	}
 	result, err := r.pool.Exec(ctx, `
 		UPDATE outbox_events
-		SET quarantined_at = now(),
-		    quarantine_code = $3,
-		    quarantine_reason = $4,
-		    publish_failures = publish_failures + 1,
-		    last_error = $4,
-		    locked_at = NULL,
-		    locked_by = NULL,
-		    updated_at = now()
-		WHERE id = $1
-		  AND published_at IS NULL
-		  AND quarantined_at IS NULL
-		  AND locked_by = $2
+		SET quarantined_at = now(), quarantine_code = $3, quarantine_reason = $4,
+		    publish_failures = publish_failures + 1, last_error = $4,
+		    locked_at = NULL, locked_by = NULL, updated_at = now()
+		WHERE id = $1 AND published_at IS NULL AND quarantined_at IS NULL AND locked_by = $2
 	`, id, owner, code, reason)
 	if err != nil {
 		return fmt.Errorf("quarantine outbox event %s: %w", id, err)
@@ -203,15 +190,9 @@ func (r *PostgresRepository) Quarantine(ctx context.Context, id uuid.UUID, owner
 func (r *PostgresRepository) Redrive(ctx context.Context, id uuid.UUID, availableAt time.Time) error {
 	result, err := r.pool.Exec(ctx, `
 		UPDATE outbox_events
-		SET quarantined_at = NULL,
-		    quarantine_code = NULL,
-		    quarantine_reason = NULL,
-		    available_at = $2,
-		    redrive_count = redrive_count + 1,
-		    updated_at = now()
-		WHERE id = $1
-		  AND published_at IS NULL
-		  AND quarantined_at IS NOT NULL
+		SET quarantined_at = NULL, quarantine_code = NULL, quarantine_reason = NULL,
+		    available_at = $2, redrive_count = redrive_count + 1, updated_at = now()
+		WHERE id = $1 AND published_at IS NULL AND quarantined_at IS NOT NULL
 	`, id, availableAt)
 	if err != nil {
 		return fmt.Errorf("redrive outbox event %s: %w", id, err)
@@ -226,10 +207,7 @@ func (r *PostgresRepository) Release(ctx context.Context, id uuid.UUID, owner st
 	result, err := r.pool.Exec(ctx, `
 		UPDATE outbox_events
 		SET locked_at = NULL, locked_by = NULL, updated_at = now()
-		WHERE id = $1
-		  AND published_at IS NULL
-		  AND quarantined_at IS NULL
-		  AND locked_by = $2
+		WHERE id = $1 AND published_at IS NULL AND quarantined_at IS NULL AND locked_by = $2
 	`, id, owner)
 	if err != nil {
 		return fmt.Errorf("release outbox event %s: %w", id, err)
@@ -246,12 +224,8 @@ func headersJSON(headers map[string]string) []byte {
 }
 
 func formatFailure(code, reason string) string {
-	if code == "" {
-		return reason
-	}
-	if reason == "" {
-		return code
-	}
+	if code == "" { return reason }
+	if reason == "" { return code }
 	return code + ": " + reason
 }
 
@@ -265,20 +239,10 @@ func scanEvents(rows rowScanner) ([]Event, error) {
 	events := make([]Event, 0)
 	for rows.Next() {
 		var event Event
-		var payload []byte
-		var headersJSONBytes []byte
-		if err := rows.Scan(
-			&event.ID,
-			&event.Subject,
-			&event.AggregateType,
-			&event.AggregateID,
-			&payload,
-			&headersJSONBytes,
-			&event.AvailableAt,
-			&event.Attempts,
-			&event.PublishFailures,
-			&event.CreatedAt,
-		); err != nil {
+		var payload, headersJSONBytes []byte
+		if err := rows.Scan(&event.ID, &event.Subject, &event.AggregateType, &event.AggregateID,
+			&payload, &headersJSONBytes, &event.AvailableAt, &event.Attempts,
+			&event.PublishFailures, &event.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan outbox event: %w", err)
 		}
 		event.Payload = json.RawMessage(payload)
@@ -287,13 +251,9 @@ func scanEvents(rows rowScanner) ([]Event, error) {
 				return nil, fmt.Errorf("decode outbox headers: %w", err)
 			}
 		}
-		if event.Headers == nil {
-			event.Headers = map[string]string{}
-		}
+		if event.Headers == nil { event.Headers = map[string]string{} }
 		events = append(events, event)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate outbox events: %w", err)
-	}
+	if err := rows.Err(); err != nil { return nil, fmt.Errorf("iterate outbox events: %w", err) }
 	return events, nil
 }
