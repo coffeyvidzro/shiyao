@@ -1,8 +1,8 @@
 # Shiyao
 
-A secure execution plane for AI-agent workloads, built around isolated Firecracker microVMs.
+**Shiyao (石爻) is a secure, self-hosted infrastructure platform for running AI agent code.**
 
-Shiyao is a Go control plane for running untrusted workloads inside Firecracker microVMs on Linux hosts with KVM. It combines per-VM networking, VSOCK-based command execution, resource and admission controls, warm instances, and snapshot support to provide a foundation for fast, isolated agent execution.
+It runs untrusted agent code inside isolated Firecracker microVMs with per-VM networking, resource controls, and a VSOCK execution API. Snapshot resume and warm instances provide the building blocks for fast, isolated execution.
 
 > **Status:** Shiyao is under active development. The current implementation is an engineering foundation, not a claim of production-ready sandbox security. Run the privileged integration tests against the exact kernel, Firecracker, nftables, and cgroup configuration you intend to deploy.
 
