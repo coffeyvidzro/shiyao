@@ -1,4 +1,4 @@
-h1:G/EBPeRc/xz0jP3A68XyEUQXqYCo45ekOpwBrljr3zQ=
+h1:1MNpgyN53/HYX1QAIRaqjz3h7kjUtz731Hi2Q1ltIgc=
 001_extensions.sql h1:RrXNNZbQIArQVUbNlcKKEQO8NI/9Oe8R3x6OvWc+4d0=
 002_create_users.sql h1:ZDoAYcXvJ+AYbYYD8Pyul2a5uPDm0eZ/07waXr+HgPo=
 003_create_auth_transactions.sql h1:XZ47moYQsciBEc0XVEChTkiBk9fc1UmUTLU2Pv/0Oqc=
@@ -6,3 +6,4 @@ h1:G/EBPeRc/xz0jP3A68XyEUQXqYCo45ekOpwBrljr3zQ=
 005_create_sessions.sql h1:8yrkBsSFdGUDbPxc5QHrXdOLgYgLUYSn+6TYXww2YL8=
 006_create_personal_access_tokens.sql h1:Fs8hnt3HniJ6f+aQaSFz+9wx800P6QSFIifr58VX8p0=
 007_create_sandboxes.sql h1:LXF50EInzQi0KwG+6CVlaNDv3PVwHQ2FJQfxZDYWs4o=
+008_create_outbox.sql h1:gbkF7CApo/te58vbBv6MsjQPVOy3rKMGI9tsxxXH59U=
