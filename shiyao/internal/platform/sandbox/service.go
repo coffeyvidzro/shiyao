@@ -124,18 +124,6 @@ func (s *Service) ExecStream(ctx context.Context, sandboxID string, req vsock.Ex
 	return vsock.ExecStream(ctx, socketPathForSandbox(sandboxID), req, receive)
 }
 
-func validateCreateRequest(req CreateRequest) error {
-	if req.VCPU < minVCPU || req.VCPU > maxVCPU {
-		return apperrors.NewBadRequest(fmt.Sprintf("vcpu must be between %d and %d", minVCPU, maxVCPU))
-	}
-	if req.MemoryMB < minMemoryMB || req.MemoryMB > maxMemoryMB {
-		return apperrors.NewBadRequest(fmt.Sprintf("memory_mb must be between %d and %d", minMemoryMB, maxMemoryMB))
-	}
-	if req.TimeoutSeconds < minTimeoutSeconds || req.TimeoutSeconds > maxTimeoutSeconds {
-		return apperrors.NewBadRequest(fmt.Sprintf("timeout_seconds must be between %d and %d", minTimeoutSeconds, maxTimeoutSeconds))
-	}
-	return nil
-}
 
 func newVMID() string { return "sbx-" + uuid.NewString() }
 

@@ -1,6 +1,11 @@
 package sandbox
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
+)
 
 const (
 	defaultTemplate       = "python-3.11"
@@ -44,4 +49,24 @@ func normalizeCreateRequest(req CreateRequest) CreateRequest {
 	req.AllowedHosts = allowedHosts
 
 	return req
+}
+
+
+func validateCreateRequest(req CreateRequest) error {
+	if req.VCPU < minVCPU || req.VCPU > maxVCPU {
+		return apperrors.NewBadRequest(
+			fmt.Sprintf("vcpu must be between %d and %d", minVCPU, maxVCPU),
+		)
+	}
+	if req.MemoryMB < minMemoryMB || req.MemoryMB > maxMemoryMB {
+		return apperrors.NewBadRequest(
+			fmt.Sprintf("memory_mb must be between %d and %d", minMemoryMB, maxMemoryMB),
+		)
+	}
+	if req.TimeoutSeconds < minTimeoutSeconds || req.TimeoutSeconds > maxTimeoutSeconds {
+		return apperrors.NewBadRequest(
+			fmt.Sprintf("timeout_seconds must be between %d and %d", minTimeoutSeconds, maxTimeoutSeconds),
+		)
+	}
+	return nil
 }
