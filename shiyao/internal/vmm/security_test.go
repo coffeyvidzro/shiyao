@@ -12,9 +12,9 @@ import (
 
 type testNetworkLease struct{ released bool }
 
-func (l *testNetworkLease) Config() network.Config { return network.Config{} }
-func (l *testNetworkLease) CID() uint32 { return 3 }
-func (l *testNetworkLease) Setup(context.Context) error { return nil }
+func (l *testNetworkLease) Config() network.Config        { return network.Config{} }
+func (l *testNetworkLease) CID() uint32                   { return 3 }
+func (l *testNetworkLease) Setup(context.Context) error   { return nil }
 func (l *testNetworkLease) Release(context.Context) error { l.released = true; return nil }
 
 func TestValidateRuntimeAssetsRejectsSymlink(t *testing.T) {

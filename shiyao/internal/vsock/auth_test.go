@@ -10,13 +10,13 @@ import (
 
 type authTestConn struct{ remote net.Addr }
 
-func (c authTestConn) Read([]byte) (int, error) { return 0, nil }
-func (c authTestConn) Write([]byte) (int, error) { return 0, nil }
-func (c authTestConn) Close() error { return nil }
-func (c authTestConn) LocalAddr() net.Addr { return &vsock.Addr{ContextID: HostCID, Port: 1024} }
-func (c authTestConn) RemoteAddr() net.Addr { return c.remote }
-func (c authTestConn) SetDeadline(_ time.Time) error { return nil }
-func (c authTestConn) SetReadDeadline(_ time.Time) error { return nil }
+func (c authTestConn) Read([]byte) (int, error)           { return 0, nil }
+func (c authTestConn) Write([]byte) (int, error)          { return 0, nil }
+func (c authTestConn) Close() error                       { return nil }
+func (c authTestConn) LocalAddr() net.Addr                { return &vsock.Addr{ContextID: HostCID, Port: 1024} }
+func (c authTestConn) RemoteAddr() net.Addr               { return c.remote }
+func (c authTestConn) SetDeadline(_ time.Time) error      { return nil }
+func (c authTestConn) SetReadDeadline(_ time.Time) error  { return nil }
 func (c authTestConn) SetWriteDeadline(_ time.Time) error { return nil }
 
 func TestAuthorizeGuestConnection(t *testing.T) {
