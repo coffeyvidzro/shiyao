@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
+	"github.com/coffeyvidzro/shiyao/internal/core/vsock"
 )
 
 // ExecStreamer is an interface to abstract the VSOCK execution logic.

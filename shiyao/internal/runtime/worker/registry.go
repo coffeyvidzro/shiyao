@@ -8,11 +8,11 @@ import (
 
 	adapter "github.com/coffeyvidzro/shiyao/internal/adapters/nats"
 	"github.com/coffeyvidzro/shiyao/internal/config"
+	"github.com/coffeyvidzro/shiyao/internal/core/network"
+	"github.com/coffeyvidzro/shiyao/internal/core/vmm"
+	"github.com/coffeyvidzro/shiyao/internal/core/vsock"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
-	"github.com/coffeyvidzro/shiyao/internal/network"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
-	"github.com/coffeyvidzro/shiyao/internal/vmm"
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
 )
 
 type Registry struct {

@@ -5,8 +5,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/coffeyvidzro/shiyao/internal/authn"
+	"github.com/coffeyvidzro/shiyao/internal/core/websocket"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
-	ws "github.com/coffeyvidzro/shiyao/internal/websocket"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 	"github.com/coffeyvidzro/shiyao/pkg/helper"
 	"github.com/coffeyvidzro/shiyao/pkg/httputil"
@@ -128,14 +128,14 @@ func (h *Handler) ExecStreamWS(c *gin.Context) {
 		return
 	}
 
-	conn, err := ws.Upgrader.Upgrade(c.Writer, c.Request, nil)
+	conn, err := websocket.Upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
 
-	wsConn := ws.NewConn(conn)
+	wsConn := websocket.NewConn(conn)
 	wsConn.SetDeadlines()
-	ws.BridgeExecStream(c.Request.Context(), wsConn, sandbox.VmID, h.service)
+	websocket.BridgeExecStream(c.Request.Context(), wsConn, sandbox.VmID, h.service)
 }
 
 func parseSandboxID(value string) (uuid.UUID, error) {

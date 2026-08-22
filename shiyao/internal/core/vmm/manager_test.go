@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/coffeyvidzro/shiyao/internal/network"
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
+	"github.com/coffeyvidzro/shiyao/internal/core/network"
+	"github.com/coffeyvidzro/shiyao/internal/core/vsock"
 )
 
 func TestManagerRejectsVMsOverResidentLimit(t *testing.T) {

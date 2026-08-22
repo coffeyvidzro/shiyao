@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/coffeyvidzro/shiyao/internal/core/vsock"
 	"github.com/coffeyvidzro/shiyao/internal/database/sqlc"
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
 	apperrors "github.com/coffeyvidzro/shiyao/pkg/errors"
 )
 

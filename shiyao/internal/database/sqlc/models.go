@@ -98,6 +98,34 @@ type Session struct {
 	CreatedAt  pgtype.Timestamptz `db:"created_at" json:"created_at"`
 }
 
+type Team struct {
+	ID        uuid.UUID          `db:"id" json:"id"`
+	Name      string             `db:"name" json:"name"`
+	Slug      string             `db:"slug" json:"slug"`
+	CreatedAt pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+}
+
+type TeamAccessToken struct {
+	ID          uuid.UUID          `db:"id" json:"id"`
+	TeamID      uuid.UUID          `db:"team_id" json:"team_id"`
+	Name        string             `db:"name" json:"name"`
+	TokenHash   string             `db:"token_hash" json:"token_hash"`
+	TokenPrefix string             `db:"token_prefix" json:"token_prefix"`
+	Scopes      []string           `db:"scopes" json:"scopes"`
+	ExpiresAt   pgtype.Timestamptz `db:"expires_at" json:"expires_at"`
+	LastUsedAt  pgtype.Timestamptz `db:"last_used_at" json:"last_used_at"`
+	CreatedBy   *uuid.UUID         `db:"created_by" json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
+type TeamMember struct {
+	TeamID    uuid.UUID          `db:"team_id" json:"team_id"`
+	UserID    uuid.UUID          `db:"user_id" json:"user_id"`
+	Role      string             `db:"role" json:"role"`
+	CreatedAt pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
 type User struct {
 	ID            uuid.UUID          `db:"id" json:"id"`
 	Email         string             `db:"email" json:"email"`
