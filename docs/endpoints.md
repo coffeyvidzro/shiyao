@@ -11,11 +11,10 @@ The shiyao daemon exposes sandbox lifecycle and execution endpoints.
 - `DELETE /v1/sandboxes/{id}`
 - `GET /v1/health`
 
-## Cloud team access tokens
+## Team access tokens
 
-Team access tokens are a Shiyao Cloud multi-tenancy feature. Team members can
-list a team's tokens; only team owners and administrators can create or revoke
-them. Build the daemon with the `cloud` tag to expose these endpoints.
+Team members can list a team's tokens. Only team owners and administrators can
+create or revoke them.
 
 - `POST /v1/teams/{team_id}/tokens`
 - `GET /v1/teams/{team_id}/tokens`

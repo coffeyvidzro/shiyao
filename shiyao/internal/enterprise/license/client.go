@@ -1,3 +1,6 @@
+//go:build enterprise
+// +build enterprise
+
 // Copyright (c) 2026 Dugble Limited. All rights reserved.
 //
 // This file is part of Shiyao Enterprise and is not covered by the MIT License

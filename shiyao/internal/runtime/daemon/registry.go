@@ -13,6 +13,7 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
 	"github.com/coffeyvidzro/shiyao/internal/identity/pat"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
+	"github.com/coffeyvidzro/shiyao/internal/identity/teamtoken"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
 	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
@@ -80,6 +81,8 @@ func NewModules(
 
 	patRepository := pat.NewRepository(queries)
 	patService := pat.NewService(patRepository)
+	teamTokenRepository := teamtoken.NewRepository(queries)
+	teamTokenService := teamtoken.NewService(teamTokenRepository)
 
 	sandboxDispatcher := newSandboxDispatcher(natsClient)
 
@@ -97,6 +100,11 @@ func NewModules(
 			Service:    patService,
 			Handler:    pat.NewHandler(patService),
 		},
+		TeamToken: TeamTokenModule{
+			Repository: teamTokenRepository,
+			Service:    teamTokenService,
+			Handler:    teamtoken.NewHandler(teamTokenService),
+		},
 		Session: SessionModule{
 			Repository: sessionRepository,
 			Service:    sessionService,
@@ -113,8 +121,6 @@ func NewModules(
 			Handler:    sandbox.NewHandler(sandboxService),
 		},
 	}
-	configureEditionModules(queries, &modules)
-
 	return modules, nil
 }
 

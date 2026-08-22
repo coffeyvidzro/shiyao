@@ -214,10 +214,9 @@ Run these commands from the `shiyao/` module directory:
 | --- | --- | --- |
 | Shiyao OSS | `go build ./cmd/daemon` | Core engine and basic authentication. |
 | Shiyao Enterprise | `go build -tags enterprise ./cmd/daemon` | Core engine plus the Enterprise extension surface for SSO, audit logging, and license validation. |
-| Shiyao Cloud | `go build -tags cloud ./cmd/daemon` | Core engine plus Cloud billing, metering, multi-tenancy, and team access tokens. |
+| Shiyao Cloud | `go build -tags cloud ./cmd/daemon` | Core engine plus Cloud billing, metering, and multi-tenancy. |
 
-The team access-token routes are registered only in Cloud builds. The Polar
-integration follows Polar's versioned [2026-10 OpenAPI specification](https://github.com/polarsource/polar/blob/main/docs/openapi/2026-10.openapi.json).
+The Polar integration follows Polar's versioned [2026-10 OpenAPI specification](https://github.com/polarsource/polar/blob/main/docs/openapi/2026-10.openapi.json).
 
 Guest sandbox integration tests require root and the relevant host kernel capabilities:
 
