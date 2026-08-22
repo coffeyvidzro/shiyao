@@ -124,7 +124,6 @@ func (s *Service) ExecStream(ctx context.Context, sandboxID string, req vsock.Ex
 	return vsock.ExecStream(ctx, socketPathForSandbox(sandboxID), req, receive)
 }
 
-
 func newVMID() string { return "sbx-" + uuid.NewString() }
 
 func socketPathForSandbox(sandboxID string) string {

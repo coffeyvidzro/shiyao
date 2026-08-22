@@ -51,7 +51,6 @@ func normalizeCreateRequest(req CreateRequest) CreateRequest {
 	return req
 }
 
-
 func validateCreateRequest(req CreateRequest) error {
 	if req.VCPU < minVCPU || req.VCPU > maxVCPU {
 		return apperrors.NewBadRequest(
