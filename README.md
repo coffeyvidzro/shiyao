@@ -2,7 +2,7 @@
 
 A Go control plane for running AI-agent workloads inside isolated Firecracker microVMs.
 
-Shiyao (石爻) manages Firecracker microVMs on Linux hosts with KVM, VSOCK, TAP devices, nftables, and cgroup v2 support.
+Shiyao (石爻) manages [Firecracker](https://firecracker-microvm.github.io/) microVMs on Linux hosts with KVM, VSOCK, TAP devices, nftables, and cgroup v2 support.
 
 ## Overview
 
