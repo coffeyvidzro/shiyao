@@ -28,9 +28,8 @@ func (r *Repository) Enqueue(ctx context.Context, event Event) (uuid.UUID, error
 	return enqueue(ctx, r.pool, event)
 }
 
-// EnqueueTx stores an outbox event in the caller's transaction. This is the
-// operation application writes should use when the event must commit with the
-// state change it describes.
+// EnqueueTx stores an outbox event in the caller's transaction. Use this when
+// the event must commit atomically with the state change it describes.
 func (r *Repository) EnqueueTx(ctx context.Context, tx pgx.Tx, event Event) (uuid.UUID, error) {
 	if tx == nil {
 		return uuid.Nil, errors.New("outbox transaction is required")
@@ -277,57 +276,5 @@ func enqueue(ctx context.Context, executor interface {
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("enqueue outbox event: %w", err)
 	}
-<<<<<<< Updated upstream
 	return event.ID, nil
-=======
-	return nil
-}
-
-func headersJSON(headers map[string]string) []byte {
-	payload, _ := json.Marshal(headers)
-	return payload
-}
-
-func formatFailure(code, reason string) string {
-	if code == "" {
-		return reason
-	}
-	if reason == "" {
-		return code
-	}
-	return code + ": " + reason
-}
-
-type rowScanner interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}
-
-func scanEvents(rows rowScanner) ([]Event, error) {
-	events := make([]Event, 0)
-	for rows.Next() {
-		var event Event
-		var payload, headersJSONBytes []byte
-		if err := rows.Scan(&event.ID, &event.Subject, &event.AggregateType, &event.AggregateID,
-			&payload, &headersJSONBytes, &event.AvailableAt, &event.Attempts,
-			&event.PublishFailures, &event.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan outbox event: %w", err)
-		}
-		event.Payload = json.RawMessage(payload)
-		if len(headersJSONBytes) != 0 {
-			if err := json.Unmarshal(headersJSONBytes, &event.Headers); err != nil {
-				return nil, fmt.Errorf("decode outbox headers: %w", err)
-			}
-		}
-		if event.Headers == nil {
-			event.Headers = map[string]string{}
-		}
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate outbox events: %w", err)
-	}
-	return events, nil
->>>>>>> Stashed changes
 }
