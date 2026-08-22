@@ -2,22 +2,36 @@ package outbox
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
+var (
+	ErrRepositoryUnavailable = errors.New("outbox repository is not configured")
+	ErrPublisherUnavailable  = errors.New("outbox publisher is not configured")
+)
+
 type Relay struct {
-	Repository Repository
-	Publisher  Publisher
-	BatchSize  int
-	Owner      string
+	repository *Repository
+	publisher  Publisher
+	owner      string
+	batchSize  int
+	lockAge    time.Duration
 }
 
-func (r Relay) RunOnce(ctx context.Context) error {
-	batchSize := r.BatchSize
-	if batchSize <= 0 {
-		batchSize = 100
+func NewRelay(repository *Repository, publisher Publisher, owner string) *Relay {
+	return &Relay{repository: repository, publisher: publisher, owner: owner, batchSize: 100, lockAge: time.Minute}
+}
+
+func (r *Relay) RunOnce(ctx context.Context) error {
+	if r.repository == nil {
+		return ErrRepositoryUnavailable
 	}
-	events, err := r.Repository.Claim(ctx, batchSize, r.Owner, time.Minute)
+	if r.publisher == nil {
+		return ErrPublisherUnavailable
+	}
+
+	events, err := r.repository.ClaimBatch(ctx, r.owner, r.batchSize, time.Now().Add(-r.lockAge))
 	if err != nil {
 		return err
 	}
@@ -29,7 +43,7 @@ func (r Relay) RunOnce(ctx context.Context) error {
 	return nil
 }
 
-func (r Relay) processEvent(ctx context.Context, event Event) error {
+func (r *Relay) processEvent(ctx context.Context, event Event) error {
 	headers := make(map[string]string, len(event.Headers)+3)
 	for key, value := range event.Headers {
 		headers[key] = value
@@ -38,23 +52,21 @@ func (r Relay) processEvent(ctx context.Context, event Event) error {
 	headers["Shiyao-Aggregate-Type"] = event.AggregateType
 	headers["Shiyao-Aggregate-Id"] = event.AggregateID.String()
 
-	publishErr := r.Publisher.Publish(ctx, event.Subject, event.Payload, headers, event.ID.String())
+	publishErr := r.publisher.Publish(ctx, event.Subject, event.Payload, headers, event.ID.String())
 	if publishErr == nil {
-		return r.Repository.MarkPublished(ctx, event.ID, r.Owner)
+		return r.repository.MarkPublished(ctx, event.ID, r.owner)
 	}
 
 	class, code := classifyPublishError(publishErr)
-	switch class {
-	case publishErrorPermanent:
-		return r.Repository.Quarantine(ctx, event.ID, r.Owner, code, publishErr.Error())
-	case publishErrorRetryable, publishErrorUnknown:
-		return r.Repository.MarkRetry(ctx, event.ID, r.Owner, time.Now().Add(backoff(event.PublishFailures)), code, publishErr.Error())
-	default:
-		return publishErr
+	if class == publishErrorPermanent {
+		return r.repository.Quarantine(ctx, event.ID, r.owner, code, publishErr.Error())
 	}
+
+	nextAttempt := time.Now().Add(retryDelay(event.PublishFailures))
+	return r.repository.Release(ctx, event.ID, r.owner, nextAttempt, publishErr.Error())
 }
 
-func backoff(failures int) time.Duration {
+func retryDelay(failures int) time.Duration {
 	if failures < 0 {
 		failures = 0
 	}
