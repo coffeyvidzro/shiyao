@@ -217,7 +217,7 @@ func benchmarkReset() func(context.Context, *Instance) error {
 		command = "rm -rf /tmp/shiyao-bench-reset && sync"
 	}
 	return func(ctx context.Context, inst *Instance) error {
-		req := vsock.ExecRequest{Version: vsock.ProtocolVersion, ID: benchmarkVMID("reset-request", time.Now().UnixNano()), Command: "/bin/sh", Args: []string{"-c", command}, TimeoutMS: 30_000}
+		req := vsock.ExecRequest{Version: vsock.ProtocolVersion, ID: benchmarkVMID("reset-request", int(time.Now().UnixNano())), Command: "/bin/sh", Args: []string{"-c", command}, TimeoutMS: 30_000}
 		_, err := vsock.Exec(ctx, inst.SocketPath, req)
 		return err
 	}
