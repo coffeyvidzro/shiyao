@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/coffeyvidzro/shiyao/internal/network"
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
+	"github.com/coffeyvidzro/shiyao/internal/core/network"
+	"github.com/coffeyvidzro/shiyao/internal/core/vsock"
 )
 
 var ErrBackpressure = errors.New("vmm admission limit reached")
