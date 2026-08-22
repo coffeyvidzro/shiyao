@@ -7,4 +7,21 @@
 // modification, or use of this file, in any medium, is strictly prohibited.
 // Use of this code requires a valid commercial license agreement with the copyright holder.
 
-package license
+package oidc
+
+import "github.com/coffeyvidzro/shiyao/internal/enterprise/identity"
+
+// Provider implements the identity provider interface for OIDC.
+type Provider struct {
+	config Config
+}
+
+func NewProvider(config Config) *Provider {
+	return &Provider{config: config}
+}
+
+func (p *Provider) Name() string {
+	return "oidc"
+}
+
+var _ identity.Provider = (*Provider)(nil)

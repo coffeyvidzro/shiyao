@@ -7,4 +7,9 @@
 // modification, or use of this file, in any medium, is strictly prohibited.
 // Use of this code requires a valid commercial license agreement with the copyright holder.
 
-package license
+package identity
+
+// Provider describes the contract for an external identity provider integration.
+type Provider interface {
+	Name() string
+}

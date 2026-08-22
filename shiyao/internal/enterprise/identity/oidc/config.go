@@ -7,4 +7,13 @@
 // modification, or use of this file, in any medium, is strictly prohibited.
 // Use of this code requires a valid commercial license agreement with the copyright holder.
 
-package license
+package oidc
+
+// Config contains the OIDC provider configuration.
+type Config struct {
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+	Scopes       []string
+}

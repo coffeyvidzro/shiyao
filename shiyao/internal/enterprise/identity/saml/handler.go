@@ -7,4 +7,13 @@
 // modification, or use of this file, in any medium, is strictly prohibited.
 // Use of this code requires a valid commercial license agreement with the copyright holder.
 
-package license
+package saml
+
+// Handler handles SAML authentication flows.
+type Handler struct {
+	config Config
+}
+
+func NewHandler(config Config) *Handler {
+	return &Handler{config: config}
+}

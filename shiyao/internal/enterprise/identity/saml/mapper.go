@@ -7,4 +7,7 @@
 // modification, or use of this file, in any medium, is strictly prohibited.
 // Use of this code requires a valid commercial license agreement with the copyright holder.
 
-package license
+package saml
+
+// Mapper converts SAML assertions into the application's user model.
+type Mapper struct{}
