@@ -2,7 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
+	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
 
 	adapter "github.com/coffeyvidzro/shiyao/internal/adapters/nats"
 	"github.com/coffeyvidzro/shiyao/internal/adapters/postgres"
@@ -12,41 +18,88 @@ import (
 )
 
 func main() {
-	log.Println("shiyao daemon starting...")
+	if err := run(); err != nil {
+		log.Fatalf("shiyao-daemon fatal: %v", err)
+	}
+}
 
-	ctx := context.Background()
+func run() error {
+	// 1. Create a root context that cancels on SIGINT/SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
+	log.Println("shiyao-daemon starting...")
+
+	// 2. Load configuration.
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		return fmt.Errorf("load config: %w", err)
 	}
 
+	// 3. Connect to PostgreSQL.
 	db, err := postgres.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("connect to postgres: %v", err)
+		return fmt.Errorf("connect to postgres: %w", err)
 	}
 	defer db.Close()
 
+	// 4. Connect to Redis.
 	redisClient, err := redis.New(ctx, cfg.RedisURL)
 	if err != nil {
-		db.Close()
-		log.Fatalf("connect to redis: %v", err)
+		return fmt.Errorf("connect to redis: %w", err)
 	}
 	defer redisClient.Close()
 
-	natsClient, err := adapter.New(ctx, cfg.NATSURL)
+	// 5. Connect to NATS JetStream.
+	natsClient, err := adapter.New(ctx, cfg.NATSURL, "shiyao-daemon")
 	if err != nil {
-		log.Fatalf("connect to nats: %v", err)
+		return fmt.Errorf("connect to nats: %w", err)
 	}
 	defer func() { _ = natsClient.Close() }()
 
+	// 6. Build the daemon registry (wires modules, routes, middleware).
 	registry, err := daemon.New(ctx, cfg, db, redisClient, natsClient)
 	if err != nil {
-		log.Fatalf("initialize daemon: %v", err)
+		return fmt.Errorf("initialize daemon: %w", err)
 	}
 	defer registry.Close()
 
-	if err := registry.Router.Run(":8080"); err != nil {
-		log.Fatalf("run daemon: %v", err)
+	// 7. Configure the HTTP server with safe timeouts.
+	srv := &http.Server{
+		Addr:              ":" + cfg.HTTPPort,
+		Handler:           registry.Router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second, // Long enough for most REST calls
+		IdleTimeout:       120 * time.Second,
 	}
+
+	// 8. Start the server in a goroutine.
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("shiyao-daemon listening on %s", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	// 9. Block until shutdown signal or server error.
+	select {
+	case <-ctx.Done():
+		log.Println("shutdown signal received, draining connections...")
+	case err := <-errCh:
+		return fmt.Errorf("http server error: %w", err)
+	}
+
+	// 10. Graceful shutdown: stop accepting new requests, wait for in-flight.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("graceful shutdown failed: %w", err)
+	}
+
+	log.Println("shiyao-daemon stopped cleanly")
+	return nil
 }

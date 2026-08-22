@@ -10,6 +10,7 @@ import (
 )
 
 type Config struct {
+	HTTPPort           string   `env:"HTTP_PORT" envDefault:"8080"`
 	DatabaseURL        string   `env:"DATABASE_URL,required"`
 	RedisURL           string   `env:"REDIS_URL,required"`
 	NATSURL            string   `env:"NATS_URL,required"`
