@@ -58,19 +58,19 @@ type ValidateLicenseKeyRequest struct {
 // validating a license key.
 type ValidatedLicenseKey struct {
 	ID               uuid.UUID
-	CreatedAt         time.Time
-	ModifiedAt        *time.Time
-	OrganizationID    uuid.UUID
-	CustomerID        uuid.UUID
-	BenefitID         uuid.UUID
-	Key               string
-	DisplayKey        string
-	Status            LicenseKeyStatus
-	LimitActivations  *int
-	Usage             int
-	LimitUsage        *int
-	Validations       int
-	LastValidatedAt   *time.Time
-	ExpiresAt         *time.Time
-	Activation        *LicenseKeyActivation
+	CreatedAt        time.Time
+	ModifiedAt       *time.Time
+	OrganizationID   uuid.UUID
+	CustomerID       uuid.UUID
+	BenefitID        uuid.UUID
+	Key              string
+	DisplayKey       string
+	Status           LicenseKeyStatus
+	LimitActivations *int
+	Usage            int
+	LimitUsage       *int
+	Validations      int
+	LastValidatedAt  *time.Time
+	ExpiresAt        *time.Time
+	Activation       *LicenseKeyActivation
 }
