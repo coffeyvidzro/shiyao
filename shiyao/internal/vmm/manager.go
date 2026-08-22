@@ -63,7 +63,6 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 		return nil, err
 	}
 
-	// 1. Fast path: Check limits and existence
 	m.mu.Lock()
 	if len(m.instances) >= m.limits.MaxVMs {
 		m.mu.Unlock()
@@ -75,36 +74,29 @@ func (m *Manager) CreateVM(vmID string) (*Instance, error) {
 	}
 	m.mu.Unlock()
 
-	// 2. Allocate resources (Network/IPAM) WITHOUT holding the global lock.
-	// This prevents IPAM latency from blocking all other VM creations/destructions.
 	allocation, err := network.Acquire(vmID, m.netCfg, m.ipam)
 	if err != nil {
 		return nil, fmt.Errorf("allocate resources for vm %s: %w", vmID, err)
 	}
 
-	// 3. Slow path: Lock again to insert safely and prevent TOCTOU races.
 	m.mu.Lock()
-
-	// Re-check existence in case another goroutine created this vmID
-	// while we were waiting on network.Acquire()
 	if _, exists := m.instances[vmID]; exists {
 		m.mu.Unlock()
-
-		// CRITICAL: Cleanup the leaked resource before returning
 		_ = allocation.Release(context.Background())
-
 		return nil, fmt.Errorf("vm %s already exists", vmID)
 	}
+	if len(m.instances) >= m.limits.MaxVMs {
+		m.mu.Unlock()
+		_ = allocation.Release(context.Background())
+		return nil, fmt.Errorf("%w: maximum of %d resident VMs", ErrBackpressure, m.limits.MaxVMs)
+	}
 
-	// 4. Finalize initialization (Safe to do under lock, it's just memory assignment)
 	vsockCfg := m.vsockCfg
 	vsockCfg.GuestCID = allocation.CID()
 	socketPath := filepath.Join(os.TempDir(), fmt.Sprintf("firecracker-%s.sock", vmID))
-
 	inst := NewInstance(vmID, socketPath, m.baseCfg, allocation, vsockCfg, m.snapCfg)
 	m.instances[vmID] = inst
 	m.mu.Unlock()
-
 	return inst, nil
 }
 
@@ -129,8 +121,7 @@ func (m *Manager) ProvisionVM(ctx context.Context, vmID string) (*Instance, erro
 		return nil, fmt.Errorf("configure vm %s: %w", vmID, err)
 	}
 	if err := inst.Start(ctx); err != nil {
-		cleanupErr := m.removeFailedVM(ctx, vmID, inst)
-		if cleanupErr != nil {
+		if cleanupErr := m.removeFailedVM(ctx, vmID, inst); cleanupErr != nil {
 			return nil, errors.Join(fmt.Errorf("start vm %s: %w", vmID, err), fmt.Errorf("cleanup vm %s: %w", vmID, cleanupErr))
 		}
 		return nil, fmt.Errorf("start vm %s: %w", vmID, err)
@@ -148,6 +139,39 @@ func (m *Manager) removeFailedVM(ctx context.Context, vmID string, inst *Instanc
 	}
 	m.mu.Unlock()
 	return nil
+}
+
+// Reconcile retries cleanup for instances that could not be fully torn down.
+// Cleanup failures remain visible in the manager until a later reconciliation succeeds.
+func (m *Manager) Reconcile(ctx context.Context) error {
+	m.mu.Lock()
+	instances := make([]struct {
+		id   string
+		inst *Instance
+	}, 0)
+	for id, inst := range m.instances {
+		if inst.State() == StateCleanupFailed {
+			instances = append(instances, struct {
+				id   string
+				inst *Instance
+			}{id: id, inst: inst})
+		}
+	}
+	m.mu.Unlock()
+
+	var errs []error
+	for _, item := range instances {
+		if err := item.inst.Stop(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("reconcile vm %s: %w", item.id, err))
+			continue
+		}
+		m.mu.Lock()
+		if m.instances[item.id] == item.inst {
+			delete(m.instances, item.id)
+		}
+		m.mu.Unlock()
+	}
+	return errors.Join(errs...)
 }
 
 func (m *Manager) DestroyVM(ctx context.Context, vmID string) error {

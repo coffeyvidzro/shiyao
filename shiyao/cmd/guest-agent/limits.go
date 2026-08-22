@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -27,6 +28,7 @@ func startWithResourceLimits(cmd *exec.Cmd) (func() error, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare cgroup: %w", err)
 	}
+	cgroupPath := cgroup.Name()
 
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -49,10 +51,20 @@ func startWithResourceLimits(cmd *exec.Cmd) (func() error, error) {
 		_ = cmd.Wait()
 	}
 
+	if err := verifyCgroupForProcess(pid, cgroupPath); err != nil {
+		killAndReap()
+		_ = cleanupCgroup()
+		return nil, fmt.Errorf("verify cgroup limits: %w", err)
+	}
 	if err := applyRlimits(pid); err != nil {
 		killAndReap()
 		_ = cleanupCgroup()
 		return nil, fmt.Errorf("apply process limits: %w", err)
+	}
+	if err := verifyRlimits(pid); err != nil {
+		killAndReap()
+		_ = cleanupCgroup()
+		return nil, fmt.Errorf("verify process limits: %w", err)
 	}
 	return cleanupCgroup, nil
 }
@@ -85,6 +97,10 @@ func prepareCgroup() (*os.File, func() error, error) {
 			return nil, nil, err
 		}
 	}
+	if err := verifyCgroupFiles(path); err != nil {
+		_ = os.Remove(path)
+		return nil, nil, err
+	}
 
 	fd, err := unix.Open(path, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -99,6 +115,35 @@ func prepareCgroup() (*os.File, func() error, error) {
 		return nil
 	}
 	return file, cleanup, nil
+}
+
+func verifyCgroupFiles(path string) error {
+	want := map[string]string{
+		"memory.max": strconv.Itoa(guestMemoryMax),
+		"pids.max":   strconv.Itoa(guestPidsMax),
+		"cpu.max":    fmt.Sprintf("%d %d", guestCPUQuotaUS, guestCPUPeriodUS),
+	}
+	for name, expected := range want {
+		got, err := os.ReadFile(filepath.Join(path, name))
+		if err != nil {
+			return fmt.Errorf("read %s: %w", name, err)
+		}
+		if strings.TrimSpace(string(got)) != expected {
+			return fmt.Errorf("%s = %q, want %q", name, strings.TrimSpace(string(got)), expected)
+		}
+	}
+	return nil
+}
+
+func verifyCgroupForProcess(pid int, cgroupPath string) error {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(data), "/shiyao/"+filepath.Base(cgroupPath)) {
+		return fmt.Errorf("process is not a member of %s", cgroupPath)
+	}
+	return nil
 }
 
 func randomCgroupName() (string, error) {
@@ -122,6 +167,28 @@ func applyRlimits(pid int) error {
 		rlimit := &unix.Rlimit{Cur: limit.value, Max: limit.value}
 		if err := unix.Prlimit(pid, limit.resource, rlimit, nil); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func verifyRlimits(pid int) error {
+	limits := []struct {
+		name     string
+		resource int
+		value    uint64
+	}{
+		{"cpu", unix.RLIMIT_CPU, 300},
+		{"file size", unix.RLIMIT_FSIZE, guestFileMax},
+		{"open files", unix.RLIMIT_NOFILE, guestNoFileMax},
+	}
+	for _, limit := range limits {
+		var got unix.Rlimit
+		if err := unix.Prlimit(pid, limit.resource, nil, &got); err != nil {
+			return err
+		}
+		if got.Cur != limit.value || got.Max != limit.value {
+			return fmt.Errorf("%s rlimit = (%d,%d), want (%d,%d)", limit.name, got.Cur, got.Max, limit.value, limit.value)
 		}
 	}
 	return nil

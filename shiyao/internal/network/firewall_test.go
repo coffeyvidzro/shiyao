@@ -15,6 +15,29 @@ func TestNftablesPolicyUsesSharedSets(t *testing.T) {
 	}
 }
 
+func TestNftablesBasePolicyIsDefaultDenyForGuests(t *testing.T) {
+	rules := nftBaseRuleset()
+	for _, want := range []string{
+		"iifname @guest_taps ip daddr 169.254.169.254 drop",
+		"iifname @guest_taps ct state established,related accept",
+		"iifname . ip daddr . tcp dport @guest_tcp_allow accept",
+		"iifname . ip daddr . udp dport @guest_udp_allow accept",
+		"iifname @guest_taps drop",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("base policy missing %q: %s", want, rules)
+		}
+	}
+}
+
+func TestNftablesVMPolicyDoesNotPermitArbitraryPorts(t *testing.T) {
+	cfg := Config{TapName: "shy0", HostIP: "172.16.0.1", GuestIP: "172.16.0.2/24", AllowedPorts: []int{443}, UplinkInterface: "eth0"}
+	rules := nftAddVM(cfg)
+	if strings.Contains(rules, ". 22 }") || strings.Contains(rules, ". 3389 }") {
+		t.Fatalf("unexpected privileged service port in policy: %s", rules)
+	}
+}
+
 func TestConfigValidate(t *testing.T) {
 	valid := Config{TapName: "shy0", HostIP: "172.16.0.1", GuestIP: "172.16.0.2/24", AllowedPorts: []int{80, 443}, UplinkInterface: "eth0"}
 	if err := valid.Validate(); err != nil {
