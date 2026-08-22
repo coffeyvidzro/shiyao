@@ -1,9 +1,11 @@
-h1:1MNpgyN53/HYX1QAIRaqjz3h7kjUtz731Hi2Q1ltIgc=
+h1:PE2z6IbobWNQpLU5qJAF8o4OZp5J/XvDggvOY1SlDeI=
 001_extensions.sql h1:RrXNNZbQIArQVUbNlcKKEQO8NI/9Oe8R3x6OvWc+4d0=
 002_create_users.sql h1:ZDoAYcXvJ+AYbYYD8Pyul2a5uPDm0eZ/07waXr+HgPo=
 003_create_auth_transactions.sql h1:XZ47moYQsciBEc0XVEChTkiBk9fc1UmUTLU2Pv/0Oqc=
 004_create_auth_challenges.sql h1:tenAvIRJwSVWvz4ZkYtQRcuKIDhG99BDJvMIW9S0PsE=
 005_create_sessions.sql h1:8yrkBsSFdGUDbPxc5QHrXdOLgYgLUYSn+6TYXww2YL8=
 006_create_personal_access_tokens.sql h1:Fs8hnt3HniJ6f+aQaSFz+9wx800P6QSFIifr58VX8p0=
-007_create_sandboxes.sql h1:LXF50EInzQi0KwG+6CVlaNDv3PVwHQ2FJQfxZDYWs4o=
-008_create_outbox.sql h1:gbkF7CApo/te58vbBv6MsjQPVOy3rKMGI9tsxxXH59U=
+007_create_teams.sql h1:LO29cVmC0kmRYwUiIDw270RnlI74TRpf6IuCWcF5pKY=
+008_create_team_access_tokens.sql h1:phRQo1+DRsoCtJh4vRKBjyyCHm9jEth1LMOdso+QHQU=
+009_create_sandboxes.sql h1:HkJ5dYry0eVYhLKvmeeZOyShq7IgfbnERJLmqDuB2ZY=
+010_create_outbox.sql h1:iKej5icHms9OmTbw+QqY/JaJqWOr39AWw8M5wXoy7qg=
