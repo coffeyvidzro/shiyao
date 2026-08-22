@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	guestvsock "github.com/coffeyvidzro/shiyao/internal/vsock"
+	guestvsock "github.com/coffeyvidzro/shiyao/internal/core/vsock"
 	"github.com/mdlayher/vsock"
 )
 
