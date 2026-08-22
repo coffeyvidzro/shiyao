@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -40,6 +41,42 @@ func validateVMID(vmID string) error {
 	}
 	if strings.ContainsAny(vmID, `/\\:*?"<>|`) {
 		return fmt.Errorf("vm ID %q contains invalid characters", vmID)
+	}
+	return nil
+}
+
+func validateRuntimeAssets(cfg Config, snap SnapshotConfig) error {
+	if snap.EnableResume {
+		if err := validateRegularFile(snap.MemFilePath, "snapshot memory file"); err != nil {
+			return err
+		}
+		if err := validateRegularFile(snap.StateFilePath, "snapshot state file"); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := validateRegularFile(cfg.KernelPath, "kernel image"); err != nil {
+		return err
+	}
+	if err := validateRegularFile(cfg.RootfsPath, "root filesystem"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateRegularFile(path, label string) error {
+	if path == "" {
+		return fmt.Errorf("%s path is required", label)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", label, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s must not be a symbolic link", label)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s must be a regular file", label)
 	}
 	return nil
 }

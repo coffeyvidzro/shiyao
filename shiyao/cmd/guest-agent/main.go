@@ -106,16 +106,11 @@ func authorizedHost(conn io.ReadWriteCloser) bool {
 	if !ok {
 		return false
 	}
-	addr, ok := c.RemoteAddr().(*vsock.Addr)
-	return ok && addr.ContextID == guestvsock.HostCID
+	return guestvsock.AuthorizeHostConnection(c) == nil
 }
 
 func sendError(conn io.Writer, err error) {
-	result := guestvsock.ExecResult{
-		Version:  guestvsock.ProtocolVersion,
-		ExitCode: -1,
-		Error:    err.Error(),
-	}
+	result := guestvsock.ExecResult{Version: guestvsock.ProtocolVersion, ExitCode: -1, Error: err.Error()}
 	payload, encodeErr := guestvsock.EncodeMessage(result)
 	if encodeErr == nil {
 		_, _ = conn.Write(payload)
@@ -123,11 +118,7 @@ func sendError(conn io.Writer, err error) {
 }
 
 func execute(req guestvsock.ExecRequest) guestvsock.ExecResult {
-	result := guestvsock.ExecResult{
-		Version:  guestvsock.ProtocolVersion,
-		ID:       req.ID,
-		ExitCode: -1,
-	}
+	result := guestvsock.ExecResult{Version: guestvsock.ProtocolVersion, ID: req.ID, ExitCode: -1}
 	if err := req.Validate(); err != nil {
 		result.Error = err.Error()
 		return result
@@ -149,10 +140,7 @@ func execute(req guestvsock.ExecRequest) guestvsock.ExecResult {
 	defer cancel()
 
 	cmd := exec.Command(req.Command, req.Args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid:   true,
-		Pdeathsig: syscall.SIGKILL,
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	cmd.Env = loadPresetEnv()
 	for key, value := range req.Env {
 		cmd.Env = append(cmd.Env, key+"="+value)
@@ -246,6 +234,4 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (b *limitedBuffer) String() string {
-	return string(b.buf)
-}
+func (b *limitedBuffer) String() string { return string(b.buf) }
