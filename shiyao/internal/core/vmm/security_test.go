@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/coffeyvidzro/shiyao/internal/network"
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
+	"github.com/coffeyvidzro/shiyao/internal/core/network"
+	"github.com/coffeyvidzro/shiyao/internal/core/vsock"
 )
 
 type testNetworkLease struct{ released bool }
