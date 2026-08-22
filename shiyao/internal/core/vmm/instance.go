@@ -13,8 +13,8 @@ import (
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
 	models "github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 
-	"github.com/coffeyvidzro/shiyao/internal/network"
-	"github.com/coffeyvidzro/shiyao/internal/vsock"
+	"github.com/coffeyvidzro/shiyao/internal/core/network"
+	"github.com/coffeyvidzro/shiyao/internal/core/vsock"
 )
 
 type networkLease interface {
