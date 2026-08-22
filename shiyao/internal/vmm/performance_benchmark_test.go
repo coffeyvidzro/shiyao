@@ -35,10 +35,14 @@ func BenchmarkPerformanceColdBoot(b *testing.B) {
 		id := benchmarkVMID("cold", n)
 		start := time.Now()
 		inst, err := manager.ProvisionVM(ctx, id)
-		if err != nil { b.Fatal(err) }
+		if err != nil {
+			b.Fatal(err)
+		}
 		b.ReportMetric(float64(time.Since(start).Microseconds()), "boot_us/op")
 		b.StopTimer()
-		if err := manager.DestroyVM(ctx, inst.ID); err != nil { b.Fatal(err) }
+		if err := manager.DestroyVM(ctx, inst.ID); err != nil {
+			b.Fatal(err)
+		}
 		b.StartTimer()
 	}
 }
@@ -52,10 +56,14 @@ func BenchmarkPerformanceSnapshotResume(b *testing.B) {
 		id := benchmarkVMID("snapshot", n)
 		start := time.Now()
 		inst, err := manager.ProvisionVM(ctx, id)
-		if err != nil { b.Fatal(err) }
+		if err != nil {
+			b.Fatal(err)
+		}
 		b.ReportMetric(float64(time.Since(start).Microseconds()), "resume_us/op")
 		b.StopTimer()
-		if err := manager.DestroyVM(ctx, inst.ID); err != nil { b.Fatal(err) }
+		if err := manager.DestroyVM(ctx, inst.ID); err != nil {
+			b.Fatal(err)
+		}
 		b.StartTimer()
 	}
 }
@@ -64,11 +72,17 @@ func BenchmarkPerformanceWarmPool(b *testing.B) {
 	manager := benchmarkManager(b, false)
 	ctx := context.Background()
 	inst, err := manager.ProvisionVM(ctx, benchmarkVMID("warm-seed", 0))
-	if err != nil { b.Fatal(err) }
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.Cleanup(func() { _ = manager.DestroyVM(ctx, inst.ID) })
 	pool, err := NewWarmPool(1)
-	if err != nil { b.Fatal(err) }
-	if err := pool.Add(inst); err != nil { b.Fatal(err) }
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := pool.Add(inst); err != nil {
+		b.Fatal(err)
+	}
 
 	reset := benchmarkReset()
 	b.ReportAllocs()
@@ -77,10 +91,16 @@ func BenchmarkPerformanceWarmPool(b *testing.B) {
 		lease := benchmarkVMID("lease", n)
 		start := time.Now()
 		got, err := pool.Checkout(lease)
-		if err != nil { b.Fatal(err) }
-		if err := pool.Checkin(ctx, lease, reset); err != nil { b.Fatal(err) }
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := pool.Checkin(ctx, lease, reset); err != nil {
+			b.Fatal(err)
+		}
 		b.ReportMetric(float64(time.Since(start).Microseconds()), "checkout_reset_checkin_us/op")
-		if got != inst { b.Fatal("warm pool returned unexpected instance") }
+		if got != inst {
+			b.Fatal("warm pool returned unexpected instance")
+		}
 	}
 }
 
@@ -88,11 +108,17 @@ func BenchmarkPerformanceReset(b *testing.B) {
 	manager := benchmarkManager(b, false)
 	ctx := context.Background()
 	inst, err := manager.ProvisionVM(ctx, benchmarkVMID("reset-seed", 0))
-	if err != nil { b.Fatal(err) }
+	if err != nil {
+		b.Fatal(err)
+	}
 	defer func() { _ = manager.DestroyVM(ctx, inst.ID) }()
 	pool, err := NewWarmPool(1)
-	if err != nil { b.Fatal(err) }
-	if err := pool.Add(inst); err != nil { b.Fatal(err) }
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := pool.Add(inst); err != nil {
+		b.Fatal(err)
+	}
 	reset := benchmarkReset()
 
 	b.ReportAllocs()
@@ -100,11 +126,17 @@ func BenchmarkPerformanceReset(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		lease := benchmarkVMID("reset", n)
 		got, err := pool.Checkout(lease)
-		if err != nil { b.Fatal(err) }
+		if err != nil {
+			b.Fatal(err)
+		}
 		start := time.Now()
-		if err := reset(ctx, got); err != nil { b.Fatal(err) }
+		if err := reset(ctx, got); err != nil {
+			b.Fatal(err)
+		}
 		b.ReportMetric(float64(time.Since(start).Microseconds()), "reset_us/op")
-		if err := pool.Checkin(ctx, lease, func(context.Context, *Instance) error { return nil }); err != nil { b.Fatal(err) }
+		if err := pool.Checkin(ctx, lease, func(context.Context, *Instance) error { return nil }); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -129,7 +161,10 @@ func BenchmarkPerformanceConcurrentProvisioning(b *testing.B) {
 						defer wg.Done()
 						<-startGate
 						inst, err := manager.ProvisionVM(ctx, ids[i])
-						if err != nil { errCh <- err; return }
+						if err != nil {
+							errCh <- err
+							return
+						}
 						instances[i] = inst
 					}(i)
 				}
@@ -138,12 +173,18 @@ func BenchmarkPerformanceConcurrentProvisioning(b *testing.B) {
 				wg.Wait()
 				close(errCh)
 				elapsed := time.Since(start)
-				for err := range errCh { b.Fatal(err) }
+				for err := range errCh {
+					b.Fatal(err)
+				}
 				b.ReportMetric(float64(elapsed.Microseconds()), "batch_us")
 				b.ReportMetric(float64(width)/elapsed.Seconds(), "provisions/sec")
 				b.StopTimer()
 				for _, inst := range instances {
-					if inst != nil { if err := manager.DestroyVM(ctx, inst.ID); err != nil { b.Fatal(err) } }
+					if inst != nil {
+						if err := manager.DestroyVM(ctx, inst.ID); err != nil {
+							b.Fatal(err)
+						}
+					}
 				}
 				b.StartTimer()
 			}
@@ -163,14 +204,18 @@ func benchmarkManager(b *testing.B, snapshot bool) *Manager {
 	snapCfg := SnapshotConfig{EnableResume: snapshot}
 	if snapshot {
 		snapCfg.MemFilePath, snapCfg.StateFilePath = os.Getenv("SHIYAO_BENCH_SNAPSHOT_MEM"), os.Getenv("SHIYAO_BENCH_SNAPSHOT_STATE")
-		if snapCfg.MemFilePath == "" || snapCfg.StateFilePath == "" { b.Skip("set snapshot fixture paths") }
+		if snapCfg.MemFilePath == "" || snapCfg.StateFilePath == "" {
+			b.Skip("set snapshot fixture paths")
+		}
 	}
 	return NewManager(cfg, netCfg, vsock.Config{}, snapCfg)
 }
 
 func benchmarkReset() func(context.Context, *Instance) error {
 	command := os.Getenv("SHIYAO_BENCH_RESET_COMMAND")
-	if command == "" { command = "rm -rf /tmp/shiyao-bench-reset && sync" }
+	if command == "" {
+		command = "rm -rf /tmp/shiyao-bench-reset && sync"
+	}
 	return func(ctx context.Context, inst *Instance) error {
 		req := vsock.ExecRequest{Version: vsock.ProtocolVersion, ID: benchmarkVMID("reset-request", time.Now().UnixNano()), Command: "/bin/sh", Args: []string{"-c", command}, TimeoutMS: 30_000}
 		_, err := vsock.Exec(ctx, inst.SocketPath, req)
@@ -179,4 +224,10 @@ func benchmarkReset() func(context.Context, *Instance) error {
 }
 
 func benchmarkVMID(prefix string, n int) string { return fmt.Sprintf("bench-%s-%d", prefix, n) }
-func benchmarkInt(name string, fallback int) int { v, err := strconv.Atoi(os.Getenv(name)); if err != nil || v <= 0 { return fallback }; return v }
+func benchmarkInt(name string, fallback int) int {
+	v, err := strconv.Atoi(os.Getenv(name))
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
+}
