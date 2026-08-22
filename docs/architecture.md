@@ -54,6 +54,8 @@ Its responsibilities include:
 
 The manager keeps live instance state in memory and coordinates resource ownership across the VMM, network, IPAM, and VSOCK subsystems.
 
+VM resource envelopes and network intents are declaratively defined in the _shiyao.yaml_ snapshot manifest.
+
 ### Firecracker
 
 Firecracker provides the microVM isolation boundary. Shiyao configures each VM with a kernel, root filesystem, vCPU and memory resources, networking, and a VSOCK device.
