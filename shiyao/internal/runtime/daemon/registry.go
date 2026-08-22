@@ -13,7 +13,6 @@ import (
 	"github.com/coffeyvidzro/shiyao/internal/identity/auth"
 	"github.com/coffeyvidzro/shiyao/internal/identity/pat"
 	"github.com/coffeyvidzro/shiyao/internal/identity/session"
-	"github.com/coffeyvidzro/shiyao/internal/identity/teamtoken"
 	"github.com/coffeyvidzro/shiyao/internal/identity/users"
 	"github.com/coffeyvidzro/shiyao/internal/platform/sandbox"
 	"github.com/coffeyvidzro/shiyao/internal/runtime/middleware"
@@ -81,15 +80,13 @@ func NewModules(
 
 	patRepository := pat.NewRepository(queries)
 	patService := pat.NewService(patRepository)
-	teamTokenRepository := teamtoken.NewRepository(queries)
-	teamTokenService := teamtoken.NewService(teamTokenRepository)
 
 	sandboxDispatcher := newSandboxDispatcher(natsClient)
 
 	sandboxRepository := sandbox.NewRepository(queries)
 	sandboxService := sandbox.NewService(sandboxRepository, sandboxDispatcher)
 
-	return Modules{
+	modules := Modules{
 		Auth: AuthModule{
 			Repository: authRepository,
 			Service:    authService,
@@ -99,11 +96,6 @@ func NewModules(
 			Repository: patRepository,
 			Service:    patService,
 			Handler:    pat.NewHandler(patService),
-		},
-		TeamToken: TeamTokenModule{
-			Repository: teamTokenRepository,
-			Service:    teamTokenService,
-			Handler:    teamtoken.NewHandler(teamTokenService),
 		},
 		Session: SessionModule{
 			Repository: sessionRepository,
@@ -120,7 +112,10 @@ func NewModules(
 			Service:    sandboxService,
 			Handler:    sandbox.NewHandler(sandboxService),
 		},
-	}, nil
+	}
+	configureEditionModules(queries, &modules)
+
+	return modules, nil
 }
 
 func (r *Registry) Close() {

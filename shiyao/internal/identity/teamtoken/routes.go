@@ -1,3 +1,5 @@
+//go:build cloud
+
 package teamtoken
 
 import "github.com/gin-gonic/gin"
