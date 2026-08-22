@@ -4,30 +4,40 @@ Shiyao (石爻) is a self-hosted execution platform for running untrusted AI age
 
 The architecture is built around a simple security boundary:
 
-```text
-┌───────────────────────────────┐
-│       Shiyao control plane    │
-│                               │
-│  API / identity / lifecycle   │
-│  admission / authorization    │
-└───────────────┬───────────────┘
-                │
-                ▼
-┌───────────────────────────────┐
-│      VMM / execution layer    │
-│                               │
-│  Firecracker  ·  IPAM         │
-│  TAP  ·  nftables  ·  VSOCK  │
-└───────────────┬───────────────┘
-                │
-                ▼
-┌───────────────────────────────┐
-│       Untrusted guest         │
-│                               │
-│       guest-agent             │
-│       PID 1 / VSOCK           │
-│       cgroup / rlimits        │
-└───────────────────────────────┘
+```mermaid
+graph TD
+    subgraph ControlPlane["Shiyao Control Plane"]
+        direction TB
+        CP1["API / Identity / Lifecycle"]
+        CP2["Admission / Authorization"]
+    end
+
+    subgraph VMM["VMM / Execution Layer"]
+        direction TB
+        V1["Firecracker MicroVMs"]
+        V2["IPAM / TAP Devices"]
+        V3["nftables Network Policy"]
+        V4["VSOCK Execution"]
+    end
+
+    subgraph Guest["Untrusted Guest Workload"]
+        direction TB
+        G1["guest-agent (PID 1)"]
+        G2["cgroup v2 / rlimits"]
+    end
+
+    ControlPlane -->|"Lifecycle & Execution"| VMM
+    VMM -->|"MicroVM Isolation"| Guest
+    V4 -->|"VSOCK"| G1
+    V2 -->|"Network"| V3
+
+    classDef plane fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    classDef vmm fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef guest fill:#ffebee,stroke:#d32f2f,stroke-width:2px;
+
+    class ControlPlane plane;
+    class VMM vmm;
+    class Guest guest;
 ```
 
 The control plane is responsible for deciding **what** should run and **which resources** it may use. The VM/execution layer is responsible for creating and managing the isolation boundary. The guest is treated as untrusted.
